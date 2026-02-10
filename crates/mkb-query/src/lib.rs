@@ -12,6 +12,7 @@ mod compiler;
 mod context;
 mod executor;
 mod formatter;
+pub mod graph;
 
 pub use compiler::{compile, CompiledQuery};
 pub use context::{ContextAssembler, ContextOpts};

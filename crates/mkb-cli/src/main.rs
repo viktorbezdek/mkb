@@ -203,6 +203,29 @@ enum Commands {
         vault: PathBuf,
     },
 
+    /// Visualize document relationships as a graph
+    Graph {
+        /// Center document ID for BFS traversal
+        #[arg(long)]
+        center: Option<String>,
+
+        /// Document type to visualize (all documents of this type)
+        #[arg(long, name = "type")]
+        doc_type: Option<String>,
+
+        /// Traversal depth (hops from center, default 2)
+        #[arg(long, default_value = "2")]
+        depth: u32,
+
+        /// Output format: dot, mermaid, json
+        #[arg(long, short, default_value = "json")]
+        format: String,
+
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
     /// Manage saved views (named MKQL queries)
     View {
         #[command(subcommand)]
@@ -448,6 +471,13 @@ fn main() -> Result<()> {
                 vault,
             } => cmd_schema_validate(&vault, &doc_type, &id),
         },
+        Some(Commands::Graph {
+            center,
+            doc_type,
+            depth,
+            format,
+            vault,
+        }) => cmd_graph(&vault, center.as_deref(), doc_type.as_deref(), depth, &format),
         Some(Commands::View { action }) => match action {
             ViewAction::Save {
                 name,
@@ -1149,6 +1179,40 @@ fn ingest_single_file(
         .context("Failed to index document")?;
 
     Ok(doc_id)
+}
+
+// === Graph ===
+
+fn cmd_graph(
+    vault_path: &Path,
+    center: Option<&str>,
+    doc_type: Option<&str>,
+    depth: u32,
+    format: &str,
+) -> Result<()> {
+    let index = open_index(vault_path)?;
+
+    let graph = if let Some(center_id) = center {
+        mkb_query::graph::GraphBuilder::from_center(&index, center_id, depth)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else if let Some(dtype) = doc_type {
+        mkb_query::graph::GraphBuilder::from_type(&index, dtype)
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        anyhow::bail!("Specify --center <ID> or --type <TYPE> for graph visualization");
+    };
+
+    match format {
+        "dot" => println!("{}", mkb_query::graph::GraphBuilder::format_dot(&graph)),
+        "mermaid" => println!("{}", mkb_query::graph::GraphBuilder::format_mermaid(&graph)),
+        "json" => println!("{}", mkb_query::graph::GraphBuilder::format_json(&graph)),
+        other => anyhow::bail!(
+            "Unknown graph format '{}'. Valid: dot, mermaid, json",
+            other
+        ),
+    }
+
+    Ok(())
 }
 
 // === View ===

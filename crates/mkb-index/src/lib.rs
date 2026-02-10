@@ -243,6 +243,41 @@ impl IndexManager {
     /// # Errors
     ///
     /// Returns [`MkbError::Index`] if the query fails.
+    /// Query a single document by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails or document not found.
+    pub fn query_by_id(&self, id: &str) -> Result<Option<IndexedDocument>, MkbError> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT id, doc_type, title, observed_at, valid_until, confidence
+                 FROM documents WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(IndexedDocument {
+                        id: row.get(0)?,
+                        doc_type: row.get(1)?,
+                        title: row.get(2)?,
+                        observed_at: row.get(3)?,
+                        valid_until: row.get(4)?,
+                        confidence: row.get(5)?,
+                    })
+                },
+            );
+        match result {
+            Ok(doc) => Ok(Some(doc)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(MkbError::Index(e.to_string())),
+        }
+    }
+
+    /// Query documents by type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
     pub fn query_by_type(&self, doc_type: &str) -> Result<Vec<IndexedDocument>, MkbError> {
         let mut stmt = self
             .conn
