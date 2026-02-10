@@ -203,6 +203,13 @@ enum Commands {
         vault: PathBuf,
     },
 
+    /// Start MCP (Model Context Protocol) server on stdio
+    Mcp {
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
     /// Visualize document relationships as a graph
     Graph {
         /// Center document ID for BFS traversal
@@ -471,6 +478,7 @@ fn main() -> Result<()> {
                 vault,
             } => cmd_schema_validate(&vault, &doc_type, &id),
         },
+        Some(Commands::Mcp { vault }) => cmd_mcp(&vault),
         Some(Commands::Graph {
             center,
             doc_type,
@@ -1179,6 +1187,27 @@ fn ingest_single_file(
         .context("Failed to index document")?;
 
     Ok(doc_id)
+}
+
+// === MCP ===
+
+#[tokio::main]
+async fn cmd_mcp(vault_path: &Path) -> Result<()> {
+    use rmcp::ServiceExt;
+
+    // Validate vault exists
+    let _vault = Vault::open(vault_path).context("Failed to open vault")?;
+
+    let service = mkb_mcp::tools::MkbMcpService::new(vault_path.to_path_buf());
+    let server = service
+        .serve(rmcp::transport::stdio())
+        .await
+        .context("Failed to start MCP server")?;
+    server
+        .waiting()
+        .await
+        .context("MCP server error")?;
+    Ok(())
 }
 
 // === Graph ===

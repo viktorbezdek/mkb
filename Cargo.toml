@@ -6,6 +6,7 @@ members = [
     "crates/mkb-index",
     "crates/mkb-vault",
     "crates/mkb-query",
+    "crates/mkb-mcp",
     "crates/mkb-cli",
     "crates/mkb-python",
 ]
@@ -47,6 +48,10 @@ pest_derive = "2.7"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# MCP
+rmcp = { version = "0.15", features = ["server", "transport-io"] }
+schemars = "1"
+
 # File watching
 notify = "7"
 
@@ -70,3 +75,4 @@ mkb-parser = { path = "crates/mkb-parser" }
 mkb-index = { path = "crates/mkb-index" }
 mkb-vault = { path = "crates/mkb-vault" }
 mkb-query = { path = "crates/mkb-query" }
+mkb-mcp = { path = "crates/mkb-mcp" }
