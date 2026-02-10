@@ -204,7 +204,7 @@ class TestUtility:
             assert status["rejection_count"] == 0
 
     def test_version_exposed(self) -> None:
-        assert mkb.__version__ == "0.1.0"
+        assert mkb.__version__ == "0.2.0"
 
 
 # === T-410: Embedding / Vector Search ===
