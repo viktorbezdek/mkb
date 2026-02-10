@@ -1,0 +1,51 @@
+# === Rust ===
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+!crates/mkb-cli/Cargo.lock
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === Environment ===
+.env
+.env.local
+.env.*.local
+
+# === Coverage ===
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+*.lcov
+tarpaulin-report.html
+cobertura.xml
+
+# === MKB runtime ===
+.mkb/indexes/
+.mkb/ingestion/rejected/
+
+# === Build artifacts ===
+*.dylib
+*.dll
+*.lib
