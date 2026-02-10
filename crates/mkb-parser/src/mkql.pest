@@ -1,0 +1,125 @@
+// MKQL — Markdown Knowledge Query Language (PEG grammar)
+//
+// Example queries:
+//   SELECT * FROM project
+//   SELECT title, status FROM project WHERE status = 'active' AND CURRENT()
+//   SELECT * FROM meeting WHERE FRESH('7d') ORDER BY observed_at DESC LIMIT 10
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+// === Keywords (case-insensitive) ===
+kw_select  = _{ ^"SELECT" }
+kw_from    = _{ ^"FROM" }
+kw_where   = _{ ^"WHERE" }
+kw_and     = _{ ^"AND" }
+kw_or      = _{ ^"OR" }
+kw_not     = _{ ^"NOT" }
+kw_in      = _{ ^"IN" }
+kw_like    = _{ ^"LIKE" }
+kw_order   = _{ ^"ORDER" }
+kw_by      = _{ ^"BY" }
+kw_asc     = _{ ^"ASC" }
+kw_desc    = _{ ^"DESC" }
+kw_limit   = _{ ^"LIMIT" }
+kw_offset  = _{ ^"OFFSET" }
+kw_as      = _{ ^"AS" }
+kw_body    = _{ ^"BODY" }
+kw_contains = _{ ^"CONTAINS" }
+kw_null    = _{ ^"NULL" }
+kw_true    = _{ ^"TRUE" }
+kw_false   = _{ ^"FALSE" }
+kw_reverse = _{ ^"REVERSE" }
+
+// Temporal function keywords
+kw_fresh      = _{ ^"FRESH" }
+kw_stale      = _{ ^"STALE" }
+kw_expired    = _{ ^"EXPIRED" }
+kw_current    = _{ ^"CURRENT" }
+kw_latest     = _{ ^"LATEST" }
+kw_as_of      = _{ ^"AS_OF" }
+kw_eff_conf   = _{ ^"EFF_CONFIDENCE" }
+kw_linked     = _{ ^"LINKED" }
+
+// === Identifiers ===
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// === Literals ===
+string_literal = @{ "'" ~ string_inner ~ "'" }
+string_inner   = @{ (!"'" ~ ANY)* }
+
+integer_literal = @{ "-"? ~ ASCII_DIGIT+ }
+float_literal   = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+boolean_literal = { kw_true | kw_false }
+null_literal    = { kw_null }
+
+value = { float_literal | integer_literal | string_literal | boolean_literal | null_literal }
+
+// === SELECT clause ===
+star = { "*" }
+
+select_field = { ident ~ (kw_as ~ ident)? }
+select_list  = { select_field ~ ("," ~ select_field)* }
+
+select_clause = { kw_select ~ (star | select_list) }
+
+// === FROM clause ===
+from_clause = { kw_from ~ ident }
+
+// === Comparison operators ===
+comp_op = { "<=" | ">=" | "!=" | "<" | ">" | "=" }
+
+// === Predicates ===
+comparison_pred = { ident ~ comp_op ~ value }
+
+in_list    = { "(" ~ value ~ ("," ~ value)* ~ ")" }
+in_pred    = { ident ~ kw_in ~ in_list }
+
+like_pred  = { ident ~ kw_like ~ string_literal }
+
+body_contains_pred = { kw_body ~ kw_contains ~ string_literal }
+
+// === Temporal functions ===
+fresh_fn    = { kw_fresh ~ "(" ~ string_literal ~ ")" }
+stale_fn    = { kw_stale ~ "(" ~ string_literal ~ ")" }
+expired_fn  = { kw_expired ~ "(" ~ ")" }
+current_fn  = { kw_current ~ "(" ~ ")" }
+latest_fn   = { kw_latest ~ "(" ~ ")" }
+as_of_fn    = { kw_as_of ~ "(" ~ string_literal ~ ")" }
+eff_conf_fn = { kw_eff_conf ~ "(" ~ comp_op ~ float_literal ~ ")" }
+
+temporal_fn = { fresh_fn | stale_fn | expired_fn | current_fn | latest_fn | as_of_fn | eff_conf_fn }
+
+// === LINKED function ===
+linked_forward = { kw_linked ~ "(" ~ string_literal ~ ("," ~ string_literal)? ~ ")" }
+linked_reverse = { kw_linked ~ "(" ~ kw_reverse ~ "," ~ string_literal ~ ("," ~ string_literal)? ~ ")" }
+linked_fn      = { linked_reverse | linked_forward }
+
+// === WHERE clause (with precedence: NOT > AND > OR) ===
+atom = { comparison_pred | in_pred | like_pred | body_contains_pred | temporal_fn | linked_fn | "(" ~ or_expr ~ ")" }
+not_expr = { kw_not ~ atom | atom }
+and_expr = { not_expr ~ (kw_and ~ not_expr)* }
+or_expr  = { and_expr ~ (kw_or ~ and_expr)* }
+
+where_clause = { kw_where ~ or_expr }
+
+// === ORDER BY clause ===
+sort_dir = { kw_asc | kw_desc }
+order_item = { ident ~ sort_dir? }
+order_by_clause = { kw_order ~ kw_by ~ order_item ~ ("," ~ order_item)* }
+
+// === LIMIT / OFFSET ===
+limit_clause  = { kw_limit ~ integer_literal }
+offset_clause = { kw_offset ~ integer_literal }
+
+// === Top-level query ===
+query = {
+    SOI ~
+    select_clause ~
+    from_clause ~
+    where_clause? ~
+    order_by_clause? ~
+    limit_clause? ~
+    offset_clause? ~
+    EOI
+}
