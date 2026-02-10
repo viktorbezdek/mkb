@@ -9,10 +9,26 @@
 
 use std::path::Path;
 
+use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, types::Value as SqlValue, Connection};
+use sqlite_vec::sqlite3_vec_init;
+use zerocopy::AsBytes;
 
 use mkb_core::document::Document;
 use mkb_core::error::MkbError;
+
+/// Embedding dimension for text-embedding-3-small (OpenAI).
+pub const EMBEDDING_DIM: usize = 1536;
+
+/// Register sqlite-vec extension globally. Safe to call multiple times.
+fn ensure_vec_extension() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| unsafe {
+        #[allow(clippy::missing_transmute_annotations)]
+        sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+    });
+}
 
 /// The IndexManager manages the SQLite index database.
 pub struct IndexManager {
@@ -26,6 +42,7 @@ impl IndexManager {
     ///
     /// Returns [`MkbError::Index`] if the database cannot be opened.
     pub fn open(path: &Path) -> Result<Self, MkbError> {
+        ensure_vec_extension();
         let conn = Connection::open(path).map_err(|e| MkbError::Index(e.to_string()))?;
         let mgr = Self { conn };
         mgr.create_schema()?;
@@ -38,6 +55,7 @@ impl IndexManager {
     ///
     /// Returns [`MkbError::Index`] if schema creation fails.
     pub fn in_memory() -> Result<Self, MkbError> {
+        ensure_vec_extension();
         let conn = Connection::open_in_memory().map_err(|e| MkbError::Index(e.to_string()))?;
         let mgr = Self { conn };
         mgr.create_schema()?;
@@ -109,8 +127,27 @@ impl IndexManager {
             CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id);
             CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id);
             CREATE INDEX IF NOT EXISTS idx_links_rel ON links(rel);
+
+            CREATE TABLE IF NOT EXISTS document_embeddings (
+                id TEXT PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (id) REFERENCES documents(id) ON DELETE CASCADE
+            );
             ",
             )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        // Create virtual vec0 table for vector search (sqlite-vec).
+        // This is idempotent — sqlite-vec handles IF NOT EXISTS internally.
+        self.conn
+            .execute_batch(&format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding float[{EMBEDDING_DIM}]
+                );"
+            ))
             .map_err(|e| MkbError::Index(e.to_string()))?;
 
         Ok(())
@@ -515,6 +552,148 @@ impl IndexManager {
         Ok(rows)
     }
 
+    // === Vector / Embedding Operations ===
+
+    /// Store an embedding vector for a document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the insert fails.
+    pub fn store_embedding(
+        &self,
+        doc_id: &str,
+        embedding: &[f32],
+        model: &str,
+    ) -> Result<(), MkbError> {
+        if embedding.len() != EMBEDDING_DIM {
+            return Err(MkbError::Index(format!(
+                "Embedding dimension mismatch: expected {EMBEDDING_DIM}, got {}",
+                embedding.len()
+            )));
+        }
+
+        let blob = embedding.as_bytes();
+
+        // Store raw embedding in document_embeddings table
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO document_embeddings (id, embedding, model)
+                 VALUES (?1, ?2, ?3)",
+                params![doc_id, blob, model],
+            )
+            .map_err(|e| MkbError::Index(format!("Store embedding failed: {e}")))?;
+
+        // Insert into vec0 virtual table for vector search
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO vec_documents (id, embedding)
+                 VALUES (?1, ?2)",
+                params![doc_id, blob],
+            )
+            .map_err(|e| MkbError::Index(format!("Vec index insert failed: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Search for similar documents using vector similarity (KNN).
+    ///
+    /// Returns document IDs with their distance scores, ordered by similarity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn search_semantic(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<VectorSearchResult>, MkbError> {
+        if query_embedding.len() != EMBEDDING_DIM {
+            return Err(MkbError::Index(format!(
+                "Query embedding dimension mismatch: expected {EMBEDDING_DIM}, got {}",
+                query_embedding.len()
+            )));
+        }
+
+        let blob = query_embedding.as_bytes();
+
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT v.id, v.distance, d.title, d.doc_type
+                 FROM vec_documents v
+                 JOIN documents d ON d.id = v.id
+                 WHERE v.embedding MATCH ?1
+                   AND k = ?2
+                 ORDER BY v.distance",
+            )
+            .map_err(|e| MkbError::Index(format!("Vec search prepare failed: {e}")))?;
+
+        let results = stmt
+            .query_map(params![blob, limit as i64], |row| {
+                Ok(VectorSearchResult {
+                    id: row.get(0)?,
+                    distance: row.get(1)?,
+                    title: row.get(2)?,
+                    doc_type: row.get(3)?,
+                })
+            })
+            .map_err(|e| MkbError::Index(format!("Vec search query failed: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(format!("Vec search row failed: {e}")))?;
+
+        Ok(results)
+    }
+
+    /// Check if a document has an embedding stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn has_embedding(&self, doc_id: &str) -> Result<bool, MkbError> {
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM document_embeddings WHERE id = ?1",
+                params![doc_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+        Ok(count > 0)
+    }
+
+    /// Remove embedding for a document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the delete fails.
+    pub fn remove_embedding(&self, doc_id: &str) -> Result<(), MkbError> {
+        self.conn
+            .execute(
+                "DELETE FROM document_embeddings WHERE id = ?1",
+                params![doc_id],
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+        self.conn
+            .execute("DELETE FROM vec_documents WHERE id = ?1", params![doc_id])
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Count documents with embeddings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn embedding_count(&self) -> Result<u64, MkbError> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM document_embeddings", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+        Ok(count as u64)
+    }
+
     /// Get count of indexed documents.
     ///
     /// # Errors
@@ -545,6 +724,15 @@ pub struct IndexedLink {
     pub target_id: String,
     pub rel: String,
     pub observed_at: String,
+}
+
+/// A vector search result with distance score.
+#[derive(Debug, Clone)]
+pub struct VectorSearchResult {
+    pub id: String,
+    pub distance: f64,
+    pub title: String,
+    pub doc_type: String,
 }
 
 /// A document as stored in the index.
@@ -958,6 +1146,122 @@ mod tests {
         let stale = mgr.staleness_sweep("2025-02-15T00:00:00+00:00").unwrap();
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0], "d2");
+    }
+
+    // === T-410.2 tests: sqlite-vec vector operations ===
+
+    /// Generate a deterministic test embedding from a seed string.
+    fn test_embedding(seed: &str) -> Vec<f32> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut vec = vec![0.0f32; EMBEDDING_DIM];
+        for (i, v) in vec.iter_mut().enumerate() {
+            let mut h = DefaultHasher::new();
+            seed.hash(&mut h);
+            i.hash(&mut h);
+            *v = (h.finish() as f32 / u64::MAX as f32) * 2.0 - 1.0;
+        }
+        // Normalize to unit vector
+        let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+        for v in &mut vec {
+            *v /= norm;
+        }
+        vec
+    }
+
+    #[test]
+    fn store_and_query_embedding() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        let doc = make_doc("d1", "project", "Alpha", "body");
+        mgr.index_document(&doc).unwrap();
+
+        let emb = test_embedding("alpha");
+        mgr.store_embedding("d1", &emb, "test-model").unwrap();
+
+        assert!(mgr.has_embedding("d1").unwrap());
+        assert!(!mgr.has_embedding("d2").unwrap());
+        assert_eq!(mgr.embedding_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn semantic_search_returns_similar_documents() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        // Create 3 documents with different embeddings
+        for (id, doc_type, title) in &[
+            ("d1", "project", "Alpha Project"),
+            ("d2", "project", "Beta Project"),
+            ("d3", "meeting", "Standup Meeting"),
+        ] {
+            let doc = make_doc(id, doc_type, title, "body");
+            mgr.index_document(&doc).unwrap();
+            mgr.store_embedding(id, &test_embedding(id), "test-model")
+                .unwrap();
+        }
+
+        // Query with the same embedding as d1 — should return d1 first
+        let results = mgr.search_semantic(&test_embedding("d1"), 3).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].id, "d1");
+        assert!(results[0].distance < results[1].distance);
+    }
+
+    #[test]
+    fn embedding_dimension_mismatch_rejected() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        let doc = make_doc("d1", "project", "Alpha", "body");
+        mgr.index_document(&doc).unwrap();
+
+        let wrong_dim = vec![0.0f32; 768]; // Wrong dimension
+        let result = mgr.store_embedding("d1", &wrong_dim, "test-model");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("dimension mismatch"));
+    }
+
+    #[test]
+    fn remove_embedding_works() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        let doc = make_doc("d1", "project", "Alpha", "body");
+        mgr.index_document(&doc).unwrap();
+        mgr.store_embedding("d1", &test_embedding("d1"), "test-model")
+            .unwrap();
+
+        assert!(mgr.has_embedding("d1").unwrap());
+        mgr.remove_embedding("d1").unwrap();
+        assert!(!mgr.has_embedding("d1").unwrap());
+        assert_eq!(mgr.embedding_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn persist_and_reload_index() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Create and populate
+        {
+            let mgr = IndexManager::open(&db_path).unwrap();
+            let doc = make_doc("d1", "project", "Alpha", "body");
+            mgr.index_document(&doc).unwrap();
+            mgr.store_embedding("d1", &test_embedding("d1"), "test-model")
+                .unwrap();
+        }
+
+        // Reopen and verify
+        {
+            let mgr = IndexManager::open(&db_path).unwrap();
+            assert_eq!(mgr.count().unwrap(), 1);
+            assert!(mgr.has_embedding("d1").unwrap());
+
+            let results = mgr.search_semantic(&test_embedding("d1"), 1).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].id, "d1");
+        }
     }
 
     #[test]

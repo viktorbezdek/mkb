@@ -9,6 +9,8 @@ license.workspace = true
 [dependencies]
 mkb-core = { workspace = true }
 rusqlite = { workspace = true }
+sqlite-vec = { workspace = true }
+zerocopy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
