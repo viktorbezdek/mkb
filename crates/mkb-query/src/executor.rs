@@ -11,10 +11,52 @@ use crate::formatter::{QueryResult, ResultRow};
 
 /// Execute a compiled query against the index.
 ///
+/// For queries with `NEAR()` predicate, uses a two-phase approach:
+/// 1. Generate mock embedding, run KNN search to get candidate IDs
+/// 2. Filter by distance threshold, inject matching IDs into SQL
+///
 /// # Errors
 ///
 /// Returns a string error if execution fails.
 pub fn execute(index: &IndexManager, compiled: &CompiledQuery) -> Result<QueryResult, String> {
+    let mut sql = compiled.sql.clone();
+
+    // Phase 1: If NEAR() is used, resolve semantic candidates first
+    if compiled.uses_semantic {
+        if let Some((ref query_text, threshold)) = compiled.near_params {
+            let embedding = mkb_index::mock_embedding(query_text);
+            // Fetch a generous number of candidates (100)
+            let candidates = index
+                .search_semantic(&embedding, 100)
+                .map_err(|e| format!("Semantic search failed: {e}"))?;
+
+            // Filter by distance threshold (lower distance = more similar)
+            let matching_ids: Vec<String> = candidates
+                .into_iter()
+                .filter(|r| r.distance <= (1.0 - threshold as f64))
+                .map(|r| r.id)
+                .collect();
+
+            if matching_ids.is_empty() {
+                return Ok(QueryResult {
+                    rows: Vec::new(),
+                    total: 0,
+                });
+            }
+
+            // Replace the NEAR placeholder with an ID filter
+            let id_list = matching_ids
+                .iter()
+                .map(|id| format!("'{id}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql = sql.replace(
+                "1=1 /* NEAR placeholder */",
+                &format!("d.id IN ({id_list})"),
+            );
+        }
+    }
+
     let sql_params: Vec<SqlValue> = compiled
         .params
         .iter()
@@ -27,7 +69,7 @@ pub fn execute(index: &IndexManager, compiled: &CompiledQuery) -> Result<QueryRe
         .collect();
 
     let rows = index
-        .execute_sql(&compiled.sql, &sql_params)
+        .execute_sql(&sql, &sql_params)
         .map_err(|e| format!("Query execution failed: {e}"))?;
 
     let total = rows.len();
@@ -170,6 +212,46 @@ mod tests {
         let result = execute(&index, &compiled).unwrap();
 
         assert_eq!(result.total, 1);
+    }
+
+    #[test]
+    fn execute_near_returns_results() {
+        let index = setup_index();
+        // Store embeddings for the test documents
+        let emb1 = mkb_index::mock_embedding("Rust systems programming");
+        index
+            .store_embedding("proj-alpha-001", &emb1, "mock")
+            .unwrap();
+
+        let emb2 = mkb_index::mock_embedding("Python data pipeline");
+        index
+            .store_embedding("proj-beta-001", &emb2, "mock")
+            .unwrap();
+
+        // Query with NEAR - should find documents semantically
+        let query = mkb_parser::parse_mkql(
+            "SELECT * FROM project WHERE NEAR('Rust systems programming', 0.0)",
+        )
+        .unwrap();
+        let compiled = compile(&query).unwrap();
+        assert!(compiled.uses_semantic);
+
+        let result = execute(&index, &compiled).unwrap();
+        // With threshold 0.0, both should match (very permissive)
+        assert!(result.total >= 1);
+    }
+
+    #[test]
+    fn execute_near_with_no_embeddings_returns_empty() {
+        let index = setup_index();
+        // Don't store any embeddings — NEAR should return empty
+        let query = mkb_parser::parse_mkql(
+            "SELECT * FROM project WHERE NEAR('machine learning', 0.9)",
+        )
+        .unwrap();
+        let compiled = compile(&query).unwrap();
+        let result = execute(&index, &compiled).unwrap();
+        assert_eq!(result.total, 0);
     }
 
     #[test]

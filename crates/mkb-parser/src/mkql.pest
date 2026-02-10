@@ -39,6 +39,7 @@ kw_latest     = _{ ^"LATEST" }
 kw_as_of      = _{ ^"AS_OF" }
 kw_eff_conf   = _{ ^"EFF_CONFIDENCE" }
 kw_linked     = _{ ^"LINKED" }
+kw_near       = _{ ^"NEAR" }
 
 // === Identifiers ===
 ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -95,8 +96,11 @@ linked_forward = { kw_linked ~ "(" ~ string_literal ~ ("," ~ string_literal)? ~ 
 linked_reverse = { kw_linked ~ "(" ~ kw_reverse ~ "," ~ string_literal ~ ("," ~ string_literal)? ~ ")" }
 linked_fn      = { linked_reverse | linked_forward }
 
+// === NEAR function (vector similarity) ===
+near_fn = { kw_near ~ "(" ~ string_literal ~ "," ~ float_literal ~ ")" }
+
 // === WHERE clause (with precedence: NOT > AND > OR) ===
-atom = { comparison_pred | in_pred | like_pred | body_contains_pred | temporal_fn | linked_fn | "(" ~ or_expr ~ ")" }
+atom = { comparison_pred | in_pred | like_pred | body_contains_pred | temporal_fn | linked_fn | near_fn | "(" ~ or_expr ~ ")" }
 not_expr = { kw_not ~ atom | atom }
 and_expr = { not_expr ~ (kw_and ~ not_expr)* }
 or_expr  = { and_expr ~ (kw_or ~ and_expr)* }

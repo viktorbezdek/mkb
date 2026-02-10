@@ -60,6 +60,8 @@ pub enum Predicate {
     Temporal(TemporalFunction),
     /// `LINKED('rel', 'target')` or `LINKED(REVERSE, 'rel', 'source')`
     Linked(LinkedFunction),
+    /// `NEAR('query text', 0.8)` — vector similarity search with threshold
+    Near { query: String, threshold: f64 },
 }
 
 /// Comparison operators.

@@ -632,7 +632,7 @@ impl IndexManager {
             .query_map(params![blob, limit as i64], |row| {
                 Ok(VectorSearchResult {
                     id: row.get(0)?,
-                    distance: row.get(1)?,
+                    distance: row.get::<_, Option<f64>>(1)?.unwrap_or(0.0),
                     title: row.get(2)?,
                     doc_type: row.get(3)?,
                 })
@@ -744,6 +744,37 @@ pub struct IndexedDocument {
     pub observed_at: String,
     pub valid_until: String,
     pub confidence: f64,
+}
+
+/// Generate a deterministic mock embedding from text using SHA-256.
+///
+/// This is the Rust port of `MockEmbeddingBackend.generate()` from Python.
+/// Produces the same deterministic vector for the same input text, suitable
+/// for testing without API calls.
+#[must_use]
+pub fn mock_embedding(text: &str) -> Vec<f32> {
+    use sha2::{Digest, Sha256};
+
+    let mut vec = Vec::with_capacity(EMBEDDING_DIM);
+    for i in 0..EMBEDDING_DIM {
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{text}-{i}").as_bytes());
+        let hash = hasher.finalize();
+        // Interpret first 4 bytes as f32
+        let val = f32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+        // Clamp to [-1, 1]
+        let val = val.clamp(-1.0e38, 1.0e38) / 1.0e38;
+        let val = val.clamp(-1.0, 1.0);
+        vec.push(val);
+    }
+    // Normalize
+    let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in &mut vec {
+            *v /= norm;
+        }
+    }
+    vec
 }
 
 #[cfg(test)]

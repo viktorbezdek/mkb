@@ -227,6 +227,10 @@ fn build_atom(pair: pest::iterators::Pair<Rule>) -> Result<WhereClause, ParseErr
             let pred = build_linked_fn(inner)?;
             Ok(WhereClause::Predicate(Predicate::Linked(pred)))
         }
+        Rule::near_fn => {
+            let pred = build_near_fn(inner)?;
+            Ok(WhereClause::Predicate(pred))
+        }
         Rule::or_expr => build_or_expr(inner),
         _ => Err(ParseError::UnexpectedRule(format!(
             "in atom: {:?}",
@@ -400,6 +404,19 @@ fn build_linked_fn(pair: pest::iterators::Pair<Rule>) -> Result<LinkedFunction, 
             inner.as_rule()
         ))),
     }
+}
+
+fn build_near_fn(pair: pest::iterators::Pair<Rule>) -> Result<Predicate, ParseError> {
+    let mut inners = pair.into_inner();
+    let query_raw = inners.next().unwrap().as_str();
+    let query = query_raw[1..query_raw.len() - 1].to_string();
+    let threshold: f64 = inners
+        .next()
+        .unwrap()
+        .as_str()
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| ParseError::Grammar(e.to_string()))?;
+    Ok(Predicate::Near { query, threshold })
 }
 
 fn build_order_by(pair: pest::iterators::Pair<Rule>) -> Result<Vec<OrderByItem>, ParseError> {
@@ -722,6 +739,45 @@ mod tests {
             msg.contains("parse error"),
             "Error should mention parse: {msg}"
         );
+    }
+
+    // === T-200.7: NEAR function ===
+
+    #[test]
+    fn parse_near_function() {
+        let q = parse_mkql("SELECT * FROM document WHERE NEAR('machine learning', 0.8)").unwrap();
+        match &q.where_clause {
+            Some(WhereClause::Predicate(Predicate::Near { query, threshold })) => {
+                assert_eq!(query, "machine learning");
+                assert!((threshold - 0.8).abs() < f64::EPSILON);
+            }
+            other => panic!("expected near, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_near_ast_structure() {
+        let q = parse_mkql("SELECT * FROM project WHERE NEAR('rust systems', 0.5)").unwrap();
+        let pred = match &q.where_clause {
+            Some(WhereClause::Predicate(p)) => p.clone(),
+            other => panic!("expected predicate, got {other:?}"),
+        };
+        assert_eq!(
+            pred,
+            Predicate::Near {
+                query: "rust systems".to_string(),
+                threshold: 0.5,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_near_combined_with_field_predicate() {
+        let q = parse_mkql(
+            "SELECT * FROM project WHERE NEAR('machine learning', 0.7) AND status = 'active'",
+        )
+        .unwrap();
+        assert!(matches!(q.where_clause, Some(WhereClause::And(_, _))));
     }
 
     // === Complex combined queries ===

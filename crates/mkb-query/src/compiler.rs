@@ -19,6 +19,10 @@ pub struct CompiledQuery {
     pub uses_fts: bool,
     /// Whether this query uses the links table.
     pub uses_links: bool,
+    /// Whether this query uses semantic (vector) search via NEAR().
+    pub uses_semantic: bool,
+    /// Semantic search parameters: (query_text, threshold).
+    pub near_params: Option<(String, f64)>,
 }
 
 /// A SQL parameter value.
@@ -105,6 +109,8 @@ pub fn compile(query: &MkqlQuery) -> Result<CompiledQuery, String> {
         params: ctx.params,
         uses_fts: ctx.uses_fts,
         uses_links: ctx.uses_links,
+        uses_semantic: ctx.uses_semantic,
+        near_params: ctx.near_params,
     })
 }
 
@@ -112,6 +118,8 @@ struct CompileCtx {
     params: Vec<SqlParam>,
     uses_fts: bool,
     uses_links: bool,
+    uses_semantic: bool,
+    near_params: Option<(String, f64)>,
 }
 
 impl CompileCtx {
@@ -120,6 +128,8 @@ impl CompileCtx {
             params: Vec::new(),
             uses_fts: false,
             uses_links: false,
+            uses_semantic: false,
+            near_params: None,
         }
     }
 
@@ -197,6 +207,14 @@ fn compile_predicate(pred: &Predicate, ctx: &mut CompileCtx) -> Result<(String, 
         }
         Predicate::Temporal(tf) => compile_temporal(tf, ctx),
         Predicate::Linked(lf) => compile_linked(lf, ctx),
+        Predicate::Near { query, threshold } => {
+            ctx.uses_semantic = true;
+            ctx.near_params = Some((query.clone(), *threshold));
+            // Placeholder: the executor will inject matching IDs
+            // via a two-phase approach (KNN first, then filter by threshold,
+            // then inject d.id IN (...) into the SQL)
+            Ok(("1=1 /* NEAR placeholder */".to_string(), false))
+        }
     }
 }
 
@@ -406,6 +424,31 @@ mod tests {
         let query = parse_mkql("SELECT title, status FROM project").unwrap();
         let compiled = compile(&query).unwrap();
         assert!(compiled.sql.contains("d.title, d.status"));
+    }
+
+    // === T-210.4: NEAR compilation ===
+
+    #[test]
+    fn compile_near_sets_semantic_flag() {
+        let query =
+            parse_mkql("SELECT * FROM project WHERE NEAR('machine learning', 0.8)").unwrap();
+        let compiled = compile(&query).unwrap();
+        assert!(compiled.uses_semantic);
+        assert!(compiled.near_params.is_some());
+        let (q, t) = compiled.near_params.unwrap();
+        assert_eq!(q, "machine learning");
+        assert!((t - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compile_near_combined_with_field() {
+        let query = parse_mkql(
+            "SELECT * FROM project WHERE NEAR('rust', 0.7) AND status = 'active'",
+        )
+        .unwrap();
+        let compiled = compile(&query).unwrap();
+        assert!(compiled.uses_semantic);
+        assert!(compiled.sql.contains("d.status ="));
     }
 
     #[test]
