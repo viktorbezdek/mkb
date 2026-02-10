@@ -33,7 +33,7 @@ pub fn execute(index: &IndexManager, compiled: &CompiledQuery) -> Result<QueryRe
             // Filter by distance threshold (lower distance = more similar)
             let matching_ids: Vec<String> = candidates
                 .into_iter()
-                .filter(|r| r.distance <= (1.0 - threshold as f64))
+                .filter(|r| r.distance <= (1.0 - threshold))
                 .map(|r| r.id)
                 .collect();
 
@@ -245,10 +245,9 @@ mod tests {
     fn execute_near_with_no_embeddings_returns_empty() {
         let index = setup_index();
         // Don't store any embeddings — NEAR should return empty
-        let query = mkb_parser::parse_mkql(
-            "SELECT * FROM project WHERE NEAR('machine learning', 0.9)",
-        )
-        .unwrap();
+        let query =
+            mkb_parser::parse_mkql("SELECT * FROM project WHERE NEAR('machine learning', 0.9)")
+                .unwrap();
         let compiled = compile(&query).unwrap();
         let result = execute(&index, &compiled).unwrap();
         assert_eq!(result.total, 0);

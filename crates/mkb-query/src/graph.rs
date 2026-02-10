@@ -205,11 +205,7 @@ impl GraphBuilder {
 
         for node in &graph.nodes {
             let label = node.title.replace('"', "'");
-            out.push_str(&format!(
-                "  {}[\"{}\"]\n",
-                node.id.replace('-', "_"),
-                label
-            ));
+            out.push_str(&format!("  {}[\"{}\"]\n", node.id.replace('-', "_"), label));
         }
 
         out.push('\n');
@@ -388,7 +384,7 @@ mod tests {
         let graph = GraphBuilder::from_type(&index, "project").unwrap();
 
         assert_eq!(graph.nodes.len(), 2); // Alpha + Beta
-        // Should include the depends_on edge between them
+                                          // Should include the depends_on edge between them
         assert!(
             graph.edges.len() >= 1,
             "Expected at least 1 edge between projects"

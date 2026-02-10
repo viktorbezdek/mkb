@@ -3,10 +3,9 @@
 use std::path::PathBuf;
 
 use rmcp::{
-    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ServerHandler,
 };
 use serde::Deserialize;
 
@@ -79,7 +78,9 @@ pub struct GetDocumentRequest {
 #[tool_router]
 impl MkbMcpService {
     /// Execute an MKQL query and return JSON results.
-    #[tool(description = "Execute an MKQL (Markdown Knowledge Query Language) query and return JSON results")]
+    #[tool(
+        description = "Execute an MKQL (Markdown Knowledge Query Language) query and return JSON results"
+    )]
     fn mkb_query(&self, Parameters(req): Parameters<QueryRequest>) -> String {
         let index = match self.open_index() {
             Ok(i) => i,
@@ -202,7 +203,9 @@ impl MkbMcpService {
     }
 
     /// Get vault health status.
-    #[tool(description = "Get vault health status including document count, index sync, and stale documents")]
+    #[tool(
+        description = "Get vault health status including document count, index sync, and stale documents"
+    )]
     fn mkb_vault_status(&self) -> String {
         let vault = match self.open_vault() {
             Ok(v) => v,

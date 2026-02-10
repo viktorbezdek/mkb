@@ -6,6 +6,8 @@
 //! lives as markdown files in the vault directory. The index layer
 //! is a derived cache that can be rebuilt from vault files.
 
+pub mod watcher;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -220,8 +222,8 @@ impl Vault {
         let dir = self.views_dir();
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.yaml", view.name));
-        let yaml = serde_yaml::to_string(view)
-            .map_err(|e| MkbError::Serialization(e.to_string()))?;
+        let yaml =
+            serde_yaml::to_string(view).map_err(|e| MkbError::Serialization(e.to_string()))?;
         fs::write(&path, yaml)?;
         Ok(path)
     }
@@ -238,8 +240,7 @@ impl Vault {
             return Err(MkbError::Vault(format!("View not found: {name}")));
         }
         let content = fs::read_to_string(&path)?;
-        serde_yaml::from_str(&content)
-            .map_err(|e| MkbError::Serialization(e.to_string()))
+        serde_yaml::from_str(&content).map_err(|e| MkbError::Serialization(e.to_string()))
     }
 
     /// List all saved views (returns view names without extension).
@@ -649,12 +650,17 @@ mod tests {
 
         let path = vault.save_view(&view).unwrap();
         assert!(path.exists());
-        assert!(path.to_string_lossy().contains("views/active-projects.yaml"));
+        assert!(path
+            .to_string_lossy()
+            .contains("views/active-projects.yaml"));
 
         let loaded = vault.load_view("active-projects").unwrap();
         assert_eq!(loaded.name, "active-projects");
         assert_eq!(loaded.query, "SELECT * FROM project WHERE CURRENT()");
-        assert_eq!(loaded.description, Some("Currently active projects".to_string()));
+        assert_eq!(
+            loaded.description,
+            Some("Currently active projects".to_string())
+        );
     }
 
     #[test]

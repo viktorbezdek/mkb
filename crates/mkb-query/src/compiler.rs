@@ -442,10 +442,9 @@ mod tests {
 
     #[test]
     fn compile_near_combined_with_field() {
-        let query = parse_mkql(
-            "SELECT * FROM project WHERE NEAR('rust', 0.7) AND status = 'active'",
-        )
-        .unwrap();
+        let query =
+            parse_mkql("SELECT * FROM project WHERE NEAR('rust', 0.7) AND status = 'active'")
+                .unwrap();
         let compiled = compile(&query).unwrap();
         assert!(compiled.uses_semantic);
         assert!(compiled.sql.contains("d.status ="));

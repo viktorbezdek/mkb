@@ -239,6 +239,13 @@ enum Commands {
         action: ViewAction,
     },
 
+    /// Watch vault for changes and auto-reindex
+    Watch {
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
     /// Ingest files into the vault
     Ingest {
         /// File or directory to ingest
@@ -443,7 +450,13 @@ fn main() -> Result<()> {
             vault,
         }) => {
             if semantic || embedding.is_some() {
-                cmd_search_semantic(&vault, query.as_deref(), embedding.as_deref(), limit, &format)
+                cmd_search_semantic(
+                    &vault,
+                    query.as_deref(),
+                    embedding.as_deref(),
+                    limit,
+                    &format,
+                )
             } else {
                 let q = query.as_deref().unwrap_or("");
                 cmd_search(&vault, q, &format)
@@ -485,7 +498,13 @@ fn main() -> Result<()> {
             depth,
             format,
             vault,
-        }) => cmd_graph(&vault, center.as_deref(), doc_type.as_deref(), depth, &format),
+        }) => cmd_graph(
+            &vault,
+            center.as_deref(),
+            doc_type.as_deref(),
+            depth,
+            &format,
+        ),
         Some(Commands::View { action }) => match action {
             ViewAction::Save {
                 name,
@@ -504,6 +523,7 @@ fn main() -> Result<()> {
         Some(Commands::Gc { vault }) => cmd_gc(&vault),
         Some(Commands::Stats { vault }) => cmd_stats(&vault),
         Some(Commands::Status { vault }) => cmd_status(&vault),
+        Some(Commands::Watch { vault }) => cmd_watch(&vault),
         Some(Commands::Ingest {
             path,
             doc_type,
@@ -724,7 +744,8 @@ fn cmd_search_semantic(
     let index = open_index(vault_path)?;
 
     let embedding: Vec<f32> = if let Some(json_str) = embedding_json {
-        serde_json::from_str(json_str).context("Invalid embedding JSON (expected array of floats)")?
+        serde_json::from_str(json_str)
+            .context("Invalid embedding JSON (expected array of floats)")?
     } else if let Some(q) = query {
         mkb_index::mock_embedding(q)
     } else {
@@ -754,7 +775,10 @@ fn cmd_search_semantic(
             if results.is_empty() {
                 println!("(no results)");
             } else {
-                println!("{:<30} {:<15} {:<30} {:>10}", "ID", "TYPE", "TITLE", "DISTANCE");
+                println!(
+                    "{:<30} {:<15} {:<30} {:>10}",
+                    "ID", "TYPE", "TITLE", "DISTANCE"
+                );
                 println!("{}", "-".repeat(88));
                 for r in &results {
                     println!(
@@ -1189,6 +1213,47 @@ fn ingest_single_file(
     Ok(doc_id)
 }
 
+// === Watch ===
+
+fn cmd_watch(vault_path: &Path) -> Result<()> {
+    let _vault = Vault::open(vault_path).context("Failed to open vault")?;
+    let index = open_index(vault_path)?;
+
+    eprintln!(
+        "Watching vault at {} for changes (Ctrl+C to stop)...",
+        vault_path.canonicalize()?.display()
+    );
+
+    let watcher = mkb_vault::watcher::VaultWatcher::start(vault_path)
+        .context("Failed to start file watcher")?;
+
+    loop {
+        if let Some(event) = watcher.recv_timeout(std::time::Duration::from_millis(500)) {
+            match event {
+                mkb_vault::watcher::VaultEvent::Changed(path) => match fs::read_to_string(&path) {
+                    Ok(content) => match frontmatter::parse_document(&content) {
+                        Ok(doc) => match index.index_document(&doc) {
+                            Ok(()) => eprintln!("  indexed: {} ({})", doc.id, doc.title),
+                            Err(e) => eprintln!("  index error: {e}"),
+                        },
+                        Err(e) => eprintln!("  parse error for {}: {e}", path.display()),
+                    },
+                    Err(e) => eprintln!("  read error for {}: {e}", path.display()),
+                },
+                mkb_vault::watcher::VaultEvent::Removed(path) => {
+                    let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    if !id.is_empty() {
+                        match index.remove_document(id) {
+                            Ok(()) => eprintln!("  removed: {id}"),
+                            Err(e) => eprintln!("  remove error: {e}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // === MCP ===
 
 #[tokio::main]
@@ -1203,10 +1268,7 @@ async fn cmd_mcp(vault_path: &Path) -> Result<()> {
         .serve(rmcp::transport::stdio())
         .await
         .context("Failed to start MCP server")?;
-    server
-        .waiting()
-        .await
-        .context("MCP server error")?;
+    server.waiting().await.context("MCP server error")?;
     Ok(())
 }
 
@@ -1264,9 +1326,7 @@ fn cmd_view_save(
         created_at: Utc::now().to_rfc3339(),
     };
 
-    let path = vault
-        .save_view(&view)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let path = vault.save_view(&view).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let output = serde_json::json!({
         "name": name,
@@ -1280,9 +1340,7 @@ fn cmd_view_save(
 fn cmd_view_list(vault_path: &Path) -> Result<()> {
     let vault = Vault::open(vault_path).context("Failed to open vault")?;
 
-    let names = vault
-        .list_views()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let names = vault.list_views().map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let mut views = Vec::new();
     for name in &names {
@@ -1303,9 +1361,7 @@ fn cmd_view_list(vault_path: &Path) -> Result<()> {
 fn cmd_view_run(vault_path: &Path, name: &str, format: &str) -> Result<()> {
     let vault = Vault::open(vault_path).context("Failed to open vault")?;
 
-    let view = vault
-        .load_view(name)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let view = vault.load_view(name).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     cmd_query(vault_path, Some(&view.query), None, None, format)
 }
