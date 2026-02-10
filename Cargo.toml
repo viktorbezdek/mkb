@@ -29,7 +29,7 @@ toml = "0.8"
 # Database
 rusqlite = { version = "0.38", features = ["bundled-full"] }
 sqlite-vec = "0.1.6"
-zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
