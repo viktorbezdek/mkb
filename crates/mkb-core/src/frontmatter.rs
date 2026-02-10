@@ -74,8 +74,7 @@ pub fn parse_document(content: &str) -> Result<Document, MkbError> {
 ///
 /// Returns [`MkbError::Serialization`] if the document cannot be serialized.
 pub fn write_document(doc: &Document) -> Result<String, MkbError> {
-    let yaml =
-        serde_yaml::to_string(doc).map_err(|e| MkbError::Serialization(e.to_string()))?;
+    let yaml = serde_yaml::to_string(doc).map_err(|e| MkbError::Serialization(e.to_string()))?;
 
     let mut output = String::with_capacity(yaml.len() + doc.body.len() + 10);
     output.push_str("---\n");

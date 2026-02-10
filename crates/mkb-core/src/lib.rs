@@ -22,4 +22,6 @@ pub mod temporal;
 pub use document::Document;
 pub use error::{MkbError, Result};
 pub use link::Link;
-pub use temporal::{DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision};
+pub use temporal::{
+    DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision,
+};

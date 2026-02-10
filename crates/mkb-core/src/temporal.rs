@@ -302,7 +302,10 @@ mod tests {
         let msg = err.to_string();
 
         // Must contain actionable information
-        assert!(msg.contains("REJECTED"), "Error should be marked as REJECTED");
+        assert!(
+            msg.contains("REJECTED"),
+            "Error should be marked as REJECTED"
+        );
         assert!(
             msg.contains("observed_at"),
             "Error should mention the missing field"

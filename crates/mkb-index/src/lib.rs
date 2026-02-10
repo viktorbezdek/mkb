@@ -26,8 +26,7 @@ impl IndexManager {
     ///
     /// Returns [`MkbError::Index`] if the database cannot be opened.
     pub fn open(path: &Path) -> Result<Self, MkbError> {
-        let conn =
-            Connection::open(path).map_err(|e| MkbError::Index(e.to_string()))?;
+        let conn = Connection::open(path).map_err(|e| MkbError::Index(e.to_string()))?;
         let mgr = Self { conn };
         mgr.create_schema()?;
         Ok(mgr)
@@ -39,8 +38,7 @@ impl IndexManager {
     ///
     /// Returns [`MkbError::Index`] if schema creation fails.
     pub fn in_memory() -> Result<Self, MkbError> {
-        let conn =
-            Connection::open_in_memory().map_err(|e| MkbError::Index(e.to_string()))?;
+        let conn = Connection::open_in_memory().map_err(|e| MkbError::Index(e.to_string()))?;
         let mgr = Self { conn };
         mgr.create_schema()?;
         Ok(mgr)

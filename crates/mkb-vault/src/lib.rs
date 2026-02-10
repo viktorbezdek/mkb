@@ -178,7 +178,10 @@ impl Vault {
             )));
         }
 
-        let archive_type_dir = self.root.join(ARCHIVE_DIR).join(type_to_directory(doc_type));
+        let archive_type_dir = self
+            .root
+            .join(ARCHIVE_DIR)
+            .join(type_to_directory(doc_type));
         fs::create_dir_all(&archive_type_dir)?;
 
         let archive_path = archive_type_dir.join(format!("{id}.md"));

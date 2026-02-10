@@ -16,6 +16,7 @@ mkb-parser = { workspace = true }
 mkb-index = { workspace = true }
 mkb-vault = { workspace = true }
 mkb-query = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
