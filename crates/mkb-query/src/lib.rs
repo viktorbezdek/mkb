@@ -10,8 +10,10 @@
 
 mod compiler;
 mod context;
+mod executor;
 mod formatter;
 
 pub use compiler::{compile, CompiledQuery};
 pub use context::{ContextAssembler, ContextOpts};
+pub use executor::execute;
 pub use formatter::{format_results, OutputFormat, QueryResult, ResultRow};

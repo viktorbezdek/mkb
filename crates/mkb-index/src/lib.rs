@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Value as SqlValue, Connection};
 
 use mkb_core::document::Document;
 use mkb_core::error::MkbError;
@@ -461,6 +461,58 @@ impl IndexManager {
             .map_err(|e| MkbError::Index(e.to_string()))?;
 
         Ok(results)
+    }
+
+    /// Execute a raw SQL query with parameters, returning rows as JSON-like maps.
+    ///
+    /// Used by the query engine to execute compiled MKQL queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn execute_sql(
+        &self,
+        sql: &str,
+        params: &[SqlValue],
+    ) -> Result<Vec<std::collections::HashMap<String, serde_json::Value>>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| MkbError::Index(format!("SQL prepare error: {e}")))?;
+
+        let column_count = stmt.column_count();
+        let column_names: Vec<String> = (0..column_count)
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+            .iter()
+            .map(|v| v as &dyn rusqlite::types::ToSql)
+            .collect();
+
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                let mut map = std::collections::HashMap::new();
+                for (i, name) in column_names.iter().enumerate() {
+                    let value: SqlValue = row.get(i)?;
+                    let json_val = match value {
+                        SqlValue::Null => serde_json::Value::Null,
+                        SqlValue::Integer(n) => serde_json::json!(n),
+                        SqlValue::Real(f) => serde_json::json!(f),
+                        SqlValue::Text(s) => serde_json::json!(s),
+                        SqlValue::Blob(b) => {
+                            serde_json::json!(format!("<blob:{} bytes>", b.len()))
+                        }
+                    };
+                    map.insert(name.clone(), json_val);
+                }
+                Ok(map)
+            })
+            .map_err(|e| MkbError::Index(format!("SQL query error: {e}")))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(format!("SQL row error: {e}")))?;
+
+        Ok(rows)
     }
 
     /// Get count of indexed documents.
