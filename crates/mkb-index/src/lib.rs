@@ -95,6 +95,20 @@ impl IndexManager {
             CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(doc_type);
             CREATE INDEX IF NOT EXISTS idx_documents_observed_at ON documents(observed_at);
             CREATE INDEX IF NOT EXISTS idx_documents_valid_until ON documents(valid_until);
+
+            CREATE TABLE IF NOT EXISTS links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                rel TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                metadata TEXT,
+                FOREIGN KEY (source_id) REFERENCES documents(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id);
+            CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id);
+            CREATE INDEX IF NOT EXISTS idx_links_rel ON links(rel);
             ",
             )
             .map_err(|e| MkbError::Index(e.to_string()))?;
@@ -254,6 +268,201 @@ impl IndexManager {
         Ok(results)
     }
 
+    /// Store links for a document. Replaces any existing links for the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the insert fails.
+    pub fn store_links(
+        &self,
+        source_id: &str,
+        links: &[mkb_core::link::Link],
+    ) -> Result<(), MkbError> {
+        // Remove existing links for this source
+        self.conn
+            .execute("DELETE FROM links WHERE source_id = ?1", params![source_id])
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        for link in links {
+            self.conn
+                .execute(
+                    "INSERT INTO links (source_id, target_id, rel, observed_at, metadata)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        source_id,
+                        link.target,
+                        link.rel,
+                        link.observed_at.to_rfc3339(),
+                        link.metadata
+                            .as_ref()
+                            .map(|m| serde_json::to_string(m).unwrap_or_default()),
+                    ],
+                )
+                .map_err(|e| MkbError::Index(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Query forward links from a source document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn query_forward_links(&self, source_id: &str) -> Result<Vec<IndexedLink>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_id, target_id, rel, observed_at FROM links
+                 WHERE source_id = ?1
+                 ORDER BY rel, observed_at",
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        let results = stmt
+            .query_map(params![source_id], |row| {
+                Ok(IndexedLink {
+                    source_id: row.get(0)?,
+                    target_id: row.get(1)?,
+                    rel: row.get(2)?,
+                    observed_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| MkbError::Index(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Query reverse links pointing to a target document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn query_reverse_links(&self, target_id: &str) -> Result<Vec<IndexedLink>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_id, target_id, rel, observed_at FROM links
+                 WHERE target_id = ?1
+                 ORDER BY rel, observed_at",
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        let results = stmt
+            .query_map(params![target_id], |row| {
+                Ok(IndexedLink {
+                    source_id: row.get(0)?,
+                    target_id: row.get(1)?,
+                    rel: row.get(2)?,
+                    observed_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| MkbError::Index(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Query documents by observed_at range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn query_by_observed_at_range(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<IndexedDocument>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, doc_type, title, observed_at, valid_until, confidence
+                 FROM documents
+                 WHERE observed_at >= ?1 AND observed_at <= ?2
+                 ORDER BY observed_at DESC",
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        let results = stmt
+            .query_map(params![from, to], |row| {
+                Ok(IndexedDocument {
+                    id: row.get(0)?,
+                    doc_type: row.get(1)?,
+                    title: row.get(2)?,
+                    observed_at: row.get(3)?,
+                    valid_until: row.get(4)?,
+                    confidence: row.get(5)?,
+                })
+            })
+            .map_err(|e| MkbError::Index(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Query current documents: not superseded and not expired at the given time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn query_current_documents(&self, at_time: &str) -> Result<Vec<IndexedDocument>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, doc_type, title, observed_at, valid_until, confidence
+                 FROM documents
+                 WHERE superseded_by IS NULL
+                   AND valid_until >= ?1
+                 ORDER BY observed_at DESC",
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        let results = stmt
+            .query_map(params![at_time], |row| {
+                Ok(IndexedDocument {
+                    id: row.get(0)?,
+                    doc_type: row.get(1)?,
+                    title: row.get(2)?,
+                    observed_at: row.get(3)?,
+                    valid_until: row.get(4)?,
+                    confidence: row.get(5)?,
+                })
+            })
+            .map_err(|e| MkbError::Index(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        Ok(results)
+    }
+
+    /// Mark expired documents by returning their IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Index`] if the query fails.
+    pub fn staleness_sweep(&self, at_time: &str) -> Result<Vec<String>, MkbError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id FROM documents
+                 WHERE valid_until < ?1
+                   AND superseded_by IS NULL
+                 ORDER BY valid_until ASC",
+            )
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        let results = stmt
+            .query_map(params![at_time], |row| row.get(0))
+            .map_err(|e| MkbError::Index(e.to_string()))?
+            .collect::<std::result::Result<Vec<String>, _>>()
+            .map_err(|e| MkbError::Index(e.to_string()))?;
+
+        Ok(results)
+    }
+
     /// Get count of indexed documents.
     ///
     /// # Errors
@@ -275,6 +484,15 @@ pub struct SearchResult {
     pub title: String,
     pub doc_type: String,
     pub rank: f64,
+}
+
+/// A link as stored in the index.
+#[derive(Debug, Clone)]
+pub struct IndexedLink {
+    pub source_id: String,
+    pub target_id: String,
+    pub rel: String,
+    pub observed_at: String,
 }
 
 /// A document as stored in the index.
@@ -440,6 +658,254 @@ mod tests {
         assert_eq!(mgr.count().unwrap(), 1);
         let results = mgr.query_by_type("project").unwrap();
         assert_eq!(results[0].title, "Updated");
+    }
+
+    // === T-110.3 tests: link indexing ===
+
+    #[test]
+    fn link_creation_with_timestamp() {
+        let link = mkb_core::link::Link {
+            rel: "owner".to_string(),
+            target: "people/jane-smith".to_string(),
+            observed_at: utc(2025, 2, 10),
+            metadata: None,
+        };
+        assert_eq!(link.rel, "owner");
+        assert_eq!(link.observed_at, utc(2025, 2, 10));
+    }
+
+    #[test]
+    fn store_and_retrieve_links() {
+        let mgr = IndexManager::in_memory().unwrap();
+        let doc = make_doc("proj-alpha-001", "project", "Alpha", "body");
+        mgr.index_document(&doc).unwrap();
+
+        let links = vec![
+            mkb_core::link::Link {
+                rel: "owner".to_string(),
+                target: "people/jane-smith".to_string(),
+                observed_at: utc(2025, 2, 10),
+                metadata: None,
+            },
+            mkb_core::link::Link {
+                rel: "blocked_by".to_string(),
+                target: "proj-beta-001".to_string(),
+                observed_at: utc(2025, 2, 10),
+                metadata: None,
+            },
+        ];
+
+        mgr.store_links("proj-alpha-001", &links).unwrap();
+        let forward = mgr.query_forward_links("proj-alpha-001").unwrap();
+        assert_eq!(forward.len(), 2);
+    }
+
+    #[test]
+    fn query_forward_links() {
+        let mgr = IndexManager::in_memory().unwrap();
+        let doc = make_doc("proj-alpha-001", "project", "Alpha", "body");
+        mgr.index_document(&doc).unwrap();
+
+        let links = vec![mkb_core::link::Link {
+            rel: "owner".to_string(),
+            target: "people/jane-smith".to_string(),
+            observed_at: utc(2025, 2, 10),
+            metadata: None,
+        }];
+        mgr.store_links("proj-alpha-001", &links).unwrap();
+
+        let forward = mgr.query_forward_links("proj-alpha-001").unwrap();
+        assert_eq!(forward.len(), 1);
+        assert_eq!(forward[0].target_id, "people/jane-smith");
+        assert_eq!(forward[0].rel, "owner");
+    }
+
+    #[test]
+    fn query_reverse_links() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        let doc1 = make_doc("proj-alpha-001", "project", "Alpha", "body");
+        mgr.index_document(&doc1).unwrap();
+        let doc2 = make_doc("proj-beta-001", "project", "Beta", "body");
+        mgr.index_document(&doc2).unwrap();
+
+        // Both projects link to same person
+        mgr.store_links(
+            "proj-alpha-001",
+            &[mkb_core::link::Link {
+                rel: "owner".to_string(),
+                target: "people/jane-smith".to_string(),
+                observed_at: utc(2025, 2, 10),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+        mgr.store_links(
+            "proj-beta-001",
+            &[mkb_core::link::Link {
+                rel: "owner".to_string(),
+                target: "people/jane-smith".to_string(),
+                observed_at: utc(2025, 2, 10),
+                metadata: None,
+            }],
+        )
+        .unwrap();
+
+        let reverse = mgr.query_reverse_links("people/jane-smith").unwrap();
+        assert_eq!(reverse.len(), 2);
+        let sources: Vec<&str> = reverse.iter().map(|l| l.source_id.as_str()).collect();
+        assert!(sources.contains(&"proj-alpha-001"));
+        assert!(sources.contains(&"proj-beta-001"));
+    }
+
+    // === T-110.4 tests: temporal queries ===
+
+    #[test]
+    fn query_by_observed_at_range() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        // Doc observed in January
+        let d1 = make_doc("d1", "project", "January Doc", "body1");
+        mgr.index_document(&d1).unwrap();
+
+        // Doc observed in March (create with different observed_at)
+        let input = RawTemporalInput {
+            observed_at: Some(utc(2025, 3, 15)),
+            valid_until: Some(utc(2025, 9, 15)),
+            temporal_precision: Some(TemporalPrecision::Day),
+            occurred_at: None,
+        };
+        let profile = DecayProfile::default_profile();
+        let mut d2 = Document::new(
+            "d2".into(),
+            "project".into(),
+            "March Doc".into(),
+            input,
+            &profile,
+        )
+        .unwrap();
+        d2.body = "body2".into();
+        mgr.index_document(&d2).unwrap();
+
+        // Query range that only includes February (from Feb 1 to Feb 28)
+        let results = mgr
+            .query_by_observed_at_range("2025-02-01T00:00:00+00:00", "2025-02-28T23:59:59+00:00")
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "d1");
+
+        // Query range that includes both
+        let results = mgr
+            .query_by_observed_at_range("2025-01-01T00:00:00+00:00", "2025-12-31T23:59:59+00:00")
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn query_current_documents() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        // Active document (valid until Aug 2025)
+        let d1 = make_doc("d1", "project", "Active", "body1");
+        mgr.index_document(&d1).unwrap();
+
+        // Expired document (valid until Jan 2025, before our query time)
+        let input = RawTemporalInput {
+            observed_at: Some(utc(2024, 6, 1)),
+            valid_until: Some(utc(2025, 1, 1)),
+            temporal_precision: Some(TemporalPrecision::Day),
+            occurred_at: None,
+        };
+        let profile = DecayProfile::default_profile();
+        let mut d2 = Document::new(
+            "d2".into(),
+            "project".into(),
+            "Expired".into(),
+            input,
+            &profile,
+        )
+        .unwrap();
+        d2.body = "body2".into();
+        mgr.index_document(&d2).unwrap();
+
+        // Superseded document
+        let mut d3 = make_doc("d3", "project", "Superseded", "body3");
+        d3.superseded_by = Some("d1".to_string());
+        mgr.index_document(&d3).unwrap();
+
+        // Query current at Feb 2025: should only return d1
+        let current = mgr
+            .query_current_documents("2025-02-15T00:00:00+00:00")
+            .unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].id, "d1");
+    }
+
+    #[test]
+    fn query_with_effective_confidence() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        // High-confidence recent doc
+        let mut d1 = make_doc("d1", "project", "Recent", "body1");
+        d1.confidence = 0.95;
+        mgr.index_document(&d1).unwrap();
+
+        // Low-confidence old doc
+        let input = RawTemporalInput {
+            observed_at: Some(utc(2024, 1, 1)),
+            valid_until: Some(utc(2026, 1, 1)),
+            temporal_precision: Some(TemporalPrecision::Day),
+            occurred_at: None,
+        };
+        let profile = DecayProfile::default_profile();
+        let mut d2 =
+            Document::new("d2".into(), "project".into(), "Old".into(), input, &profile).unwrap();
+        d2.body = "body2".into();
+        d2.confidence = 0.5;
+        mgr.index_document(&d2).unwrap();
+
+        // Query all and check confidence values are retrievable
+        let all = mgr.query_all().unwrap();
+        assert_eq!(all.len(), 2);
+
+        let recent = all.iter().find(|d| d.id == "d1").unwrap();
+        assert!((recent.confidence - 0.95).abs() < f64::EPSILON);
+
+        let old = all.iter().find(|d| d.id == "d2").unwrap();
+        assert!((old.confidence - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn staleness_sweep_marks_expired() {
+        let mgr = IndexManager::in_memory().unwrap();
+
+        // Doc valid until June 2025
+        let d1 = make_doc("d1", "project", "Valid", "body1");
+        mgr.index_document(&d1).unwrap();
+
+        // Doc valid until Jan 2025 (expired)
+        let input = RawTemporalInput {
+            observed_at: Some(utc(2024, 6, 1)),
+            valid_until: Some(utc(2025, 1, 1)),
+            temporal_precision: Some(TemporalPrecision::Day),
+            occurred_at: None,
+        };
+        let profile = DecayProfile::default_profile();
+        let mut d2 = Document::new(
+            "d2".into(),
+            "project".into(),
+            "Expired".into(),
+            input,
+            &profile,
+        )
+        .unwrap();
+        d2.body = "body2".into();
+        mgr.index_document(&d2).unwrap();
+
+        // Sweep at Feb 2025
+        let stale = mgr.staleness_sweep("2025-02-15T00:00:00+00:00").unwrap();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0], "d2");
     }
 
     #[test]

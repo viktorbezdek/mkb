@@ -207,6 +207,62 @@ impl Vault {
         self.root.join(".mkb").join("ingestion").join("rejected")
     }
 
+    /// Write a rejected document to the rejection log.
+    ///
+    /// Stores the raw content and error details in `.mkb/ingestion/rejected/`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Io`] if file writing fails.
+    pub fn write_rejection(
+        &self,
+        filename: &str,
+        raw_content: &str,
+        error: &str,
+        extraction_attempts: &[String],
+    ) -> Result<PathBuf, MkbError> {
+        let rejected_dir = self.rejected_dir();
+        fs::create_dir_all(&rejected_dir)?;
+
+        let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+        let reject_filename = format!("{timestamp}-{filename}");
+        let path = rejected_dir.join(&reject_filename);
+
+        let mut content = String::new();
+        content.push_str("---\n");
+        content.push_str(&format!("rejected_at: \"{}\"\n", Utc::now().to_rfc3339()));
+        content.push_str(&format!("error: \"{error}\"\n"));
+        content.push_str(&format!("original_file: \"{filename}\"\n"));
+        if !extraction_attempts.is_empty() {
+            content.push_str("extraction_attempts:\n");
+            for attempt in extraction_attempts {
+                content.push_str(&format!("  - \"{attempt}\"\n"));
+            }
+        }
+        content.push_str("---\n\n");
+        content.push_str(raw_content);
+
+        fs::write(&path, content)?;
+        Ok(path)
+    }
+
+    /// Count rejected documents in the rejection log.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Io`] if directory reading fails.
+    pub fn rejection_count(&self) -> Result<usize, MkbError> {
+        let rejected_dir = self.rejected_dir();
+        if !rejected_dir.exists() {
+            return Ok(0);
+        }
+        let count = fs::read_dir(&rejected_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|ext| ext.to_str()).is_some())
+            .count();
+        Ok(count)
+    }
+
     fn scan_directory(&self, dir: &Path, docs: &mut Vec<PathBuf>) -> Result<(), MkbError> {
         if !dir.exists() {
             return Ok(());
@@ -232,6 +288,41 @@ impl Vault {
 
         Ok(())
     }
+}
+
+/// Find the next available counter for a document ID to avoid collisions.
+///
+/// Scans the type directory for existing files matching the pattern
+/// and returns the next counter value.
+#[must_use]
+pub fn next_counter(vault_root: &Path, doc_type: &str, slug: &str) -> u32 {
+    let type_dir = vault_root.join(type_to_directory(doc_type));
+    let type_prefix = &doc_type[..doc_type.len().min(4)];
+    let pattern = format!("{type_prefix}-{slug}-");
+
+    if !type_dir.exists() {
+        return 1;
+    }
+
+    let mut max_counter: u32 = 0;
+    if let Ok(entries) = fs::read_dir(&type_dir) {
+        for entry in entries.flatten() {
+            let name = entry
+                .path()
+                .file_stem()
+                .and_then(|s| s.to_str().map(String::from))
+                .unwrap_or_default();
+            if name.starts_with(&pattern) {
+                if let Some(counter_str) = name.strip_prefix(&pattern) {
+                    if let Ok(counter) = counter_str.parse::<u32>() {
+                        max_counter = max_counter.max(counter);
+                    }
+                }
+            }
+        }
+    }
+
+    max_counter + 1
 }
 
 /// Map a document type to its subdirectory name.
@@ -265,6 +356,7 @@ pub fn slugify(title: &str) -> String {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use mkb_core::document::Document;
     use mkb_core::temporal::{DecayProfile, RawTemporalInput, TemporalPrecision};
 
     fn utc(y: i32, m: u32, d: u32) -> chrono::DateTime<Utc> {
@@ -459,5 +551,101 @@ mod tests {
         let path = vault.document_path("project", "proj-alpha-001");
         assert!(path.to_string_lossy().contains("projects"));
         assert!(path.to_string_lossy().contains("proj-alpha-001.md"));
+    }
+
+    // === T-110.5 tests: rejection log ===
+
+    #[test]
+    fn rejected_doc_written_to_rejected_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let path = vault
+            .write_rejection(
+                "bad-doc.md",
+                "# Some content without frontmatter",
+                "REJECTED: No temporal grounding",
+                &[],
+            )
+            .unwrap();
+
+        assert!(path.exists());
+        assert!(path.to_string_lossy().contains("rejected"));
+        assert!(path.to_string_lossy().contains("bad-doc.md"));
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("rejected_at"));
+        assert!(content.contains("No temporal grounding"));
+        assert!(content.contains("# Some content without frontmatter"));
+    }
+
+    #[test]
+    fn rejection_includes_extraction_attempts() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let attempts = vec![
+            "date_extraction: no dates found".to_string(),
+            "header_parsing: no temporal markers".to_string(),
+        ];
+
+        let path = vault
+            .write_rejection(
+                "undated.md",
+                "# Meeting notes\nSome content here.",
+                "REJECTED: No temporal grounding",
+                &attempts,
+            )
+            .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("extraction_attempts"));
+        assert!(content.contains("date_extraction"));
+        assert!(content.contains("header_parsing"));
+    }
+
+    #[test]
+    fn rejection_count_tracks_rejected_docs() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        assert_eq!(vault.rejection_count().unwrap(), 0);
+
+        vault
+            .write_rejection("bad1.md", "content1", "error1", &[])
+            .unwrap();
+        assert_eq!(vault.rejection_count().unwrap(), 1);
+
+        vault
+            .write_rejection("bad2.md", "content2", "error2", &[])
+            .unwrap();
+        assert_eq!(vault.rejection_count().unwrap(), 2);
+    }
+
+    // === T-110.6 tests: file path resolution ===
+
+    #[test]
+    fn collision_appends_counter() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        // Create first document
+        let doc1 = make_doc("proj-alpha-project-001", "project", "Alpha Project");
+        vault.create(&doc1).unwrap();
+
+        // next_counter should return 2 since 001 already exists
+        let counter = next_counter(dir.path(), "project", "alpha-project");
+        assert_eq!(counter, 2);
+
+        // Create second document with the next counter
+        let id2 = Document::generate_id("project", "Alpha Project", counter);
+        assert_eq!(id2, "proj-alpha-project-002");
+
+        let doc2 = make_doc(&id2, "project", "Alpha Project v2");
+        vault.create(&doc2).unwrap();
+
+        // next_counter should now return 3
+        let counter = next_counter(dir.path(), "project", "alpha-project");
+        assert_eq!(counter, 3);
     }
 }
