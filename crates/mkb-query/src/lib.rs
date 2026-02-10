@@ -5,17 +5,13 @@
 //!
 //! Includes:
 //! - MKQL-to-SQL compiler
-//! - Query plan optimizer
 //! - Result formatter (JSON, Table, Markdown, Context)
 //! - Context assembler for LLM token budgets
 
-/// Placeholder for query engine implementation.
-/// Implementation will be added in Phase 3 (T-310.x).
+mod compiler;
+mod context;
+mod formatter;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder() {
-        // Query engine tests will be added in Phase 3 (T-310.1+)
-    }
-}
+pub use compiler::{compile, CompiledQuery};
+pub use context::{ContextAssembler, ContextOpts};
+pub use formatter::{format_results, OutputFormat, QueryResult, ResultRow};
