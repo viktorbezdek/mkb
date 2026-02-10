@@ -349,6 +349,74 @@ fn vault_status(py: Python<'_>, vault_path: &str) -> PyResult<Py<PyDict>> {
     Ok(dict.into())
 }
 
+// === Embedding Operations (T-410) ===
+
+/// Store an embedding vector for a document.
+#[pyfunction]
+fn store_embedding(
+    vault_path: &str,
+    doc_id: &str,
+    embedding: Vec<f32>,
+    model: &str,
+) -> PyResult<()> {
+    let index = open_index(Path::new(vault_path))?;
+    index
+        .store_embedding(doc_id, &embedding, model)
+        .map_err(|e| PyValueError::new_err(format!("Store embedding failed: {e}")))
+}
+
+/// Search for similar documents using vector similarity.
+#[pyfunction]
+#[pyo3(signature = (vault_path, query_embedding, limit=10))]
+fn search_semantic(
+    py: Python<'_>,
+    vault_path: &str,
+    query_embedding: Vec<f32>,
+    limit: usize,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let index = open_index(Path::new(vault_path))?;
+
+    let results = index
+        .search_semantic(&query_embedding, limit)
+        .map_err(|e| PyValueError::new_err(format!("Semantic search failed: {e}")))?;
+
+    results
+        .iter()
+        .map(|r| {
+            let dict = PyDict::new(py);
+            dict.set_item("id", &r.id)?;
+            dict.set_item("title", &r.title)?;
+            dict.set_item("type", &r.doc_type)?;
+            dict.set_item("distance", r.distance)?;
+            Ok(dict.into())
+        })
+        .collect()
+}
+
+/// Check if a document has an embedding.
+#[pyfunction]
+fn has_embedding(vault_path: &str, doc_id: &str) -> PyResult<bool> {
+    let index = open_index(Path::new(vault_path))?;
+    index
+        .has_embedding(doc_id)
+        .map_err(|e| PyValueError::new_err(format!("Has embedding check failed: {e}")))
+}
+
+/// Get count of documents with embeddings.
+#[pyfunction]
+fn embedding_count(vault_path: &str) -> PyResult<u64> {
+    let index = open_index(Path::new(vault_path))?;
+    index
+        .embedding_count()
+        .map_err(|e| PyValueError::new_err(format!("Embedding count failed: {e}")))
+}
+
+/// Get the expected embedding dimension.
+#[pyfunction]
+fn embedding_dim() -> usize {
+    mkb_index::EMBEDDING_DIM
+}
+
 /// MKB Python module.
 #[pymodule]
 fn _mkb_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -368,6 +436,13 @@ fn _mkb_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Temporal gate (T-400.3)
     m.add_function(wrap_pyfunction!(validate_temporal, m)?)?;
+
+    // Embedding operations (T-410)
+    m.add_function(wrap_pyfunction!(store_embedding, m)?)?;
+    m.add_function(wrap_pyfunction!(search_semantic, m)?)?;
+    m.add_function(wrap_pyfunction!(has_embedding, m)?)?;
+    m.add_function(wrap_pyfunction!(embedding_count, m)?)?;
+    m.add_function(wrap_pyfunction!(embedding_dim, m)?)?;
 
     // Utility
     m.add_function(wrap_pyfunction!(document_count, m)?)?;

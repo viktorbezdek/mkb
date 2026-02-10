@@ -1,11 +1,14 @@
 """Tests for the PyO3 bridge (mkb._mkb_core).
 
-Validates GATE-4a: Python can import and use all Rust-exposed functions.
+Validates GATE-4a and GATE-4b: Python can import and use all Rust functions
+including vault CRUD, index operations, temporal gate, and vector search.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import struct
 import tempfile
 from pathlib import Path
 
@@ -203,3 +206,78 @@ class TestUtility:
 
     def test_version_exposed(self) -> None:
         assert mkb.__version__ == "0.1.0"
+
+
+# === T-410: Embedding / Vector Search ===
+
+
+def _test_embedding(seed: str) -> list[float]:
+    """Generate a deterministic test embedding from a seed string."""
+    dim = mkb.embedding_dim()
+    vec = []
+    for i in range(dim):
+        h = hashlib.sha256(f"{seed}-{i}".encode()).digest()
+        val = struct.unpack("f", h[:4])[0]
+        # Clamp to reasonable range
+        val = max(-1.0, min(1.0, val / 1e38))
+        vec.append(val)
+    # Normalize
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm > 0:
+        vec = [v / norm for v in vec]
+    return vec
+
+
+class TestEmbeddings:
+    """Vector embedding storage and semantic search through PyO3 bridge."""
+
+    def test_embedding_dim(self) -> None:
+        assert mkb.embedding_dim() == 1536
+
+    def test_store_and_check_embedding(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            mkb.init_vault(d)
+            doc = mkb.create_document(
+                d, "project", "Alpha", "2025-02-10T00:00:00Z"
+            )
+            doc_id = doc["id"]
+
+            assert not mkb.has_embedding(d, doc_id)
+
+            emb = _test_embedding("alpha")
+            mkb.store_embedding(d, doc_id, emb, "test-model")
+
+            assert mkb.has_embedding(d, doc_id)
+            assert mkb.embedding_count(d) == 1
+
+    def test_semantic_search(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            mkb.init_vault(d)
+
+            ids = []
+            for name in ["Alpha", "Beta", "Gamma"]:
+                doc = mkb.create_document(
+                    d, "project", name, "2025-02-10T00:00:00Z"
+                )
+                doc_id = doc["id"]
+                ids.append(doc_id)
+                mkb.store_embedding(d, doc_id, _test_embedding(name), "test-model")
+
+            # Search with Alpha's embedding — should return Alpha first
+            results = mkb.search_semantic(d, _test_embedding("Alpha"), limit=3)
+            assert len(results) == 3
+            assert results[0]["id"] == ids[0]
+            assert results[0]["distance"] < results[1]["distance"]
+
+    def test_embedding_dimension_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            mkb.init_vault(d)
+            doc = mkb.create_document(
+                d, "project", "Alpha", "2025-02-10T00:00:00Z"
+            )
+            try:
+                mkb.store_embedding(d, doc["id"], [0.0] * 768, "bad-model")
+                msg = "Should have raised ValueError"
+                raise AssertionError(msg)
+            except ValueError:
+                pass
