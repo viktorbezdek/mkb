@@ -1,0 +1,20 @@
+[package]
+name = "mkb-python"
+description = "PyO3 bridge for MKB Rust-Python interop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "_mkb_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+mkb-core = { workspace = true }
+mkb-vault = { workspace = true }
+mkb-index = { workspace = true }
+mkb-query = { workspace = true }
+pyo3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
