@@ -18,6 +18,7 @@ pub mod frontmatter;
 pub mod link;
 pub mod schema;
 pub mod temporal;
+pub mod view;
 
 pub use document::Document;
 pub use error::{MkbError, Result};
@@ -25,3 +26,4 @@ pub use link::Link;
 pub use temporal::{
     DecayModel, DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision,
 };
+pub use view::SavedView;

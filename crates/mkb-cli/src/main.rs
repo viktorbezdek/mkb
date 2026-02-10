@@ -94,6 +94,14 @@ enum Commands {
         #[arg(long, short, default_value = "json")]
         format: String,
 
+        /// Save this query as a named view
+        #[arg(long)]
+        save: Option<String>,
+
+        /// Run a saved view by name (instead of an MKQL string)
+        #[arg(long)]
+        view: Option<String>,
+
         /// Vault directory (defaults to current directory)
         #[arg(long, default_value = ".")]
         vault: PathBuf,
@@ -183,6 +191,12 @@ enum Commands {
         vault: PathBuf,
     },
 
+    /// Manage saved views (named MKQL queries)
+    View {
+        #[command(subcommand)]
+        action: ViewAction,
+    },
+
     /// Ingest files into the vault
     Ingest {
         /// File or directory to ingest
@@ -254,6 +268,57 @@ enum SchemaAction {
     },
 }
 
+#[derive(clap::Subcommand)]
+enum ViewAction {
+    /// Save an MKQL query as a named view
+    Save {
+        /// View name
+        name: String,
+
+        /// MKQL query string
+        mkql: String,
+
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
+    /// List all saved views
+    List {
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
+    /// Run a saved view
+    Run {
+        /// View name
+        name: String,
+
+        /// Output format: json, table, markdown
+        #[arg(long, short, default_value = "json")]
+        format: String,
+
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+
+    /// Delete a saved view
+    Delete {
+        /// View name
+        name: String,
+
+        /// Vault directory (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        vault: PathBuf,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -291,13 +356,42 @@ fn main() -> Result<()> {
             search,
             format,
             vault,
-        }) => cmd_query(
-            &vault,
-            mkql.as_deref(),
-            doc_type.as_deref(),
-            search.as_deref(),
-            &format,
-        ),
+            save,
+            view,
+        }) => {
+            // --view flag: load saved view and run it
+            if let Some(view_name) = view {
+                let v = Vault::open(&vault).context("Failed to open vault")?;
+                let saved = v
+                    .load_view(&view_name)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                return cmd_query(&vault, Some(&saved.query), None, None, &format);
+            }
+            // --save flag: save the query as a view, then run it
+            if let Some(save_name) = save {
+                if let Some(ref mkql_str) = mkql {
+                    let v = Vault::open(&vault).context("Failed to open vault")?;
+                    let saved_view = mkb_core::view::SavedView {
+                        name: save_name,
+                        description: None,
+                        query: mkql_str.clone(),
+                        created_at: Utc::now().to_rfc3339(),
+                    };
+                    v.save_view(&saved_view)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    eprintln!("View '{}' saved.", saved_view.name);
+                } else {
+                    anyhow::bail!("--save requires an MKQL query string");
+                }
+            }
+            cmd_query(
+                &vault,
+                mkql.as_deref(),
+                doc_type.as_deref(),
+                search.as_deref(),
+                &format,
+            )
+        }
         Some(Commands::Search {
             query,
             format,
@@ -331,6 +425,21 @@ fn main() -> Result<()> {
                 doc_type,
                 vault,
             } => cmd_schema_validate(&vault, &doc_type, &id),
+        },
+        Some(Commands::View { action }) => match action {
+            ViewAction::Save {
+                name,
+                mkql,
+                description,
+                vault,
+            } => cmd_view_save(&vault, &name, &mkql, description.as_deref()),
+            ViewAction::List { vault } => cmd_view_list(&vault),
+            ViewAction::Run {
+                name,
+                format,
+                vault,
+            } => cmd_view_run(&vault, &name, &format),
+            ViewAction::Delete { name, vault } => cmd_view_delete(&vault, &name),
         },
         Some(Commands::Gc { vault }) => cmd_gc(&vault),
         Some(Commands::Stats { vault }) => cmd_stats(&vault),
@@ -948,6 +1057,87 @@ fn ingest_single_file(
         .context("Failed to index document")?;
 
     Ok(doc_id)
+}
+
+// === View ===
+
+fn cmd_view_save(
+    vault_path: &Path,
+    name: &str,
+    mkql: &str,
+    description: Option<&str>,
+) -> Result<()> {
+    let vault = Vault::open(vault_path).context("Failed to open vault")?;
+
+    // Validate the query parses
+    mkb_parser::parse_mkql(mkql).map_err(|e| anyhow::anyhow!("Invalid MKQL: {e}"))?;
+
+    let view = mkb_core::view::SavedView {
+        name: name.to_string(),
+        description: description.map(|s| s.to_string()),
+        query: mkql.to_string(),
+        created_at: Utc::now().to_rfc3339(),
+    };
+
+    let path = vault
+        .save_view(&view)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let output = serde_json::json!({
+        "name": name,
+        "query": mkql,
+        "path": path.display().to_string(),
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn cmd_view_list(vault_path: &Path) -> Result<()> {
+    let vault = Vault::open(vault_path).context("Failed to open vault")?;
+
+    let names = vault
+        .list_views()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut views = Vec::new();
+    for name in &names {
+        if let Ok(view) = vault.load_view(name) {
+            views.push(serde_json::json!({
+                "name": view.name,
+                "query": view.query,
+                "description": view.description,
+                "created_at": view.created_at,
+            }));
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&views)?);
+    Ok(())
+}
+
+fn cmd_view_run(vault_path: &Path, name: &str, format: &str) -> Result<()> {
+    let vault = Vault::open(vault_path).context("Failed to open vault")?;
+
+    let view = vault
+        .load_view(name)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    cmd_query(vault_path, Some(&view.query), None, None, format)
+}
+
+fn cmd_view_delete(vault_path: &Path, name: &str) -> Result<()> {
+    let vault = Vault::open(vault_path).context("Failed to open vault")?;
+
+    vault
+        .delete_view(name)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let output = serde_json::json!({
+        "name": name,
+        "deleted": true,
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
 }
 
 // === Helpers ===

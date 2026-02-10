@@ -14,6 +14,7 @@ use mkb_core::document::Document;
 use mkb_core::error::MkbError;
 use mkb_core::frontmatter::{parse_document, write_document};
 use mkb_core::temporal::TemporalGate;
+use mkb_core::view::SavedView;
 
 /// Standard vault directory structure.
 const ARCHIVE_DIR: &str = ".archive";
@@ -56,6 +57,7 @@ impl Vault {
         fs::create_dir_all(mkb_dir.join("index"))?;
         fs::create_dir_all(mkb_dir.join("ingestion"))?;
         fs::create_dir_all(mkb_dir.join("ingestion").join("rejected"))?;
+        fs::create_dir_all(mkb_dir.join("views"))?;
         fs::create_dir_all(root.join(ARCHIVE_DIR))?;
 
         Ok(Self {
@@ -199,6 +201,84 @@ impl Vault {
         let mut docs = Vec::new();
         self.scan_directory(&self.root, &mut docs)?;
         Ok(docs)
+    }
+
+    // === Saved Views ===
+
+    /// Return the views directory path.
+    #[must_use]
+    pub fn views_dir(&self) -> PathBuf {
+        self.root.join(".mkb").join("views")
+    }
+
+    /// Save a named view (MKQL query) to `.mkb/views/{name}.yaml`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Io`] if writing fails.
+    pub fn save_view(&self, view: &SavedView) -> Result<PathBuf, MkbError> {
+        let dir = self.views_dir();
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{}.yaml", view.name));
+        let yaml = serde_yaml::to_string(view)
+            .map_err(|e| MkbError::Serialization(e.to_string()))?;
+        fs::write(&path, yaml)?;
+        Ok(path)
+    }
+
+    /// Load a saved view by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Vault`] if the view does not exist.
+    /// Returns [`MkbError::Serialization`] if parsing fails.
+    pub fn load_view(&self, name: &str) -> Result<SavedView, MkbError> {
+        let path = self.views_dir().join(format!("{name}.yaml"));
+        if !path.exists() {
+            return Err(MkbError::Vault(format!("View not found: {name}")));
+        }
+        let content = fs::read_to_string(&path)?;
+        serde_yaml::from_str(&content)
+            .map_err(|e| MkbError::Serialization(e.to_string()))
+    }
+
+    /// List all saved views (returns view names without extension).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Io`] if directory reading fails.
+    pub fn list_views(&self) -> Result<Vec<String>, MkbError> {
+        let dir = self.views_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Delete a saved view by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MkbError::Vault`] if the view does not exist.
+    /// Returns [`MkbError::Io`] if deletion fails.
+    pub fn delete_view(&self, name: &str) -> Result<(), MkbError> {
+        let path = self.views_dir().join(format!("{name}.yaml"));
+        if !path.exists() {
+            return Err(MkbError::Vault(format!("View not found: {name}")));
+        }
+        fs::remove_file(&path)?;
+        Ok(())
     }
 
     /// Return the rejected directory path.
@@ -551,6 +631,96 @@ mod tests {
         let path = vault.document_path("project", "proj-alpha-001");
         assert!(path.to_string_lossy().contains("projects"));
         assert!(path.to_string_lossy().contains("proj-alpha-001.md"));
+    }
+
+    // === Saved Views tests ===
+
+    #[test]
+    fn vault_save_and_load_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let view = mkb_core::view::SavedView {
+            name: "active-projects".to_string(),
+            description: Some("Currently active projects".to_string()),
+            query: "SELECT * FROM project WHERE CURRENT()".to_string(),
+            created_at: "2025-02-10T00:00:00Z".to_string(),
+        };
+
+        let path = vault.save_view(&view).unwrap();
+        assert!(path.exists());
+        assert!(path.to_string_lossy().contains("views/active-projects.yaml"));
+
+        let loaded = vault.load_view("active-projects").unwrap();
+        assert_eq!(loaded.name, "active-projects");
+        assert_eq!(loaded.query, "SELECT * FROM project WHERE CURRENT()");
+        assert_eq!(loaded.description, Some("Currently active projects".to_string()));
+    }
+
+    #[test]
+    fn vault_list_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        // Empty initially
+        assert!(vault.list_views().unwrap().is_empty());
+
+        let view1 = mkb_core::view::SavedView {
+            name: "alpha".to_string(),
+            description: None,
+            query: "SELECT * FROM project".to_string(),
+            created_at: "2025-02-10T00:00:00Z".to_string(),
+        };
+        let view2 = mkb_core::view::SavedView {
+            name: "beta".to_string(),
+            description: None,
+            query: "SELECT * FROM meeting".to_string(),
+            created_at: "2025-02-10T00:00:00Z".to_string(),
+        };
+
+        vault.save_view(&view1).unwrap();
+        vault.save_view(&view2).unwrap();
+
+        let names = vault.list_views().unwrap();
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn vault_delete_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let view = mkb_core::view::SavedView {
+            name: "to-delete".to_string(),
+            description: None,
+            query: "SELECT * FROM project".to_string(),
+            created_at: "2025-02-10T00:00:00Z".to_string(),
+        };
+
+        vault.save_view(&view).unwrap();
+        assert!(vault.load_view("to-delete").is_ok());
+
+        vault.delete_view("to-delete").unwrap();
+        assert!(vault.load_view("to-delete").is_err());
+    }
+
+    #[test]
+    fn vault_load_nonexistent_view_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let result = vault.load_view("does-not-exist");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn vault_delete_nonexistent_view_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::init(dir.path()).unwrap();
+
+        let result = vault.delete_view("nope");
+        assert!(result.is_err());
     }
 
     // === T-110.5 tests: rejection log ===
