@@ -110,12 +110,24 @@ enum Commands {
     /// Quick full-text search
     #[command(alias = "s")]
     Search {
-        /// Search query
-        query: String,
+        /// Search query (text for FTS/semantic, or omit with --embedding)
+        query: Option<String>,
 
         /// Output format: json, table, markdown
         #[arg(long, short, default_value = "json")]
         format: String,
+
+        /// Use semantic (vector) search instead of full-text search
+        #[arg(long)]
+        semantic: bool,
+
+        /// Pre-computed embedding vector as JSON array (e.g., '[0.1, 0.2, ...]')
+        #[arg(long)]
+        embedding: Option<String>,
+
+        /// Maximum results to return
+        #[arg(long, default_value = "10")]
+        limit: usize,
 
         /// Vault directory (defaults to current directory)
         #[arg(long, default_value = ".")]
@@ -395,8 +407,18 @@ fn main() -> Result<()> {
         Some(Commands::Search {
             query,
             format,
+            semantic,
+            embedding,
+            limit,
             vault,
-        }) => cmd_search(&vault, &query, &format),
+        }) => {
+            if semantic || embedding.is_some() {
+                cmd_search_semantic(&vault, query.as_deref(), embedding.as_deref(), limit, &format)
+            } else {
+                let q = query.as_deref().unwrap_or("");
+                cmd_search(&vault, q, &format)
+            }
+        }
         Some(Commands::Edit {
             id,
             set,
@@ -643,6 +665,76 @@ fn cmd_search(vault_path: &Path, query: &str, format: &str) -> Result<()> {
                         "type": r.doc_type,
                         "title": r.title,
                         "rank": r.rank,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json)?);
+        }
+    }
+    Ok(())
+}
+
+// === Semantic Search ===
+
+fn cmd_search_semantic(
+    vault_path: &Path,
+    query: Option<&str>,
+    embedding_json: Option<&str>,
+    limit: usize,
+    format: &str,
+) -> Result<()> {
+    let index = open_index(vault_path)?;
+
+    let embedding: Vec<f32> = if let Some(json_str) = embedding_json {
+        serde_json::from_str(json_str).context("Invalid embedding JSON (expected array of floats)")?
+    } else if let Some(q) = query {
+        mkb_index::mock_embedding(q)
+    } else {
+        anyhow::bail!("Semantic search requires either a query string or --embedding vector");
+    };
+
+    let results = index
+        .search_semantic(&embedding, limit)
+        .context("Semantic search failed")?;
+
+    match format {
+        "json" => {
+            let json: Vec<serde_json::Value> = results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "type": r.doc_type,
+                        "title": r.title,
+                        "distance": r.distance,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json)?);
+        }
+        "table" => {
+            if results.is_empty() {
+                println!("(no results)");
+            } else {
+                println!("{:<30} {:<15} {:<30} {:>10}", "ID", "TYPE", "TITLE", "DISTANCE");
+                println!("{}", "-".repeat(88));
+                for r in &results {
+                    println!(
+                        "{:<30} {:<15} {:<30} {:>10.4}",
+                        r.id, r.doc_type, r.title, r.distance
+                    );
+                }
+            }
+        }
+        _ => {
+            let json: Vec<serde_json::Value> = results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "type": r.doc_type,
+                        "title": r.title,
+                        "distance": r.distance,
                     })
                 })
                 .collect();
