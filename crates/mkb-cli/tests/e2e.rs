@@ -20,7 +20,11 @@ fn mkb_in(dir: &Path) -> Command {
 fn init_vault() -> TempDir {
     let dir = TempDir::new().unwrap();
     let output = mkb_in(dir.path()).arg("init").arg(".").output().unwrap();
-    assert!(output.status.success(), "init failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     dir
 }
 
@@ -28,15 +32,24 @@ fn add_project(dir: &Path, title: &str) -> serde_json::Value {
     let output = mkb_in(dir)
         .args([
             "add",
-            "--doc-type", "project",
-            "--title", title,
-            "--observed-at", "2025-02-10T00:00:00Z",
-            "--body", &format!("Body of {title}"),
-            "--tags", "rust,test",
+            "--doc-type",
+            "project",
+            "--title",
+            title,
+            "--observed-at",
+            "2025-02-10T00:00:00Z",
+            "--body",
+            &format!("Body of {title}"),
+            "--tags",
+            "rust,test",
         ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "add failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
@@ -52,7 +65,12 @@ fn e2e_init_creates_vault_structure() {
 
     // Verify structure
     assert!(dir.path().join(".mkb").exists());
-    assert!(dir.path().join(".mkb").join("index").join("mkb.db").exists());
+    assert!(dir
+        .path()
+        .join(".mkb")
+        .join("index")
+        .join("mkb.db")
+        .exists());
 }
 
 // === T-300.2: Add ===
@@ -72,11 +90,7 @@ fn e2e_add_creates_document_with_temporal_gate() {
 fn e2e_add_rejects_without_observed_at() {
     let dir = init_vault();
     let output = mkb_in(dir.path())
-        .args([
-            "add",
-            "--doc-type", "project",
-            "--title", "Test",
-        ])
+        .args(["add", "--doc-type", "project", "--title", "Test"])
         .output()
         .unwrap();
     // Should fail because --observed-at is required
@@ -112,15 +126,22 @@ This is a test project document.
     let output = mkb_in(dir.path())
         .args([
             "add",
-            "--doc-type", "project",
-            "--title", "ignored",
-            "--observed-at", "2025-02-10T00:00:00Z",
+            "--doc-type",
+            "project",
+            "--title",
+            "ignored",
+            "--observed-at",
+            "2025-02-10T00:00:00Z",
             "--from-file",
             file_path.to_str().unwrap(),
         ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "add from-file failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "add from-file failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["id"], "proj-test-001");
@@ -139,7 +160,11 @@ fn e2e_query_with_mkql() {
         .args(["query", "SELECT * FROM project"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "query failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Alpha Project"));
@@ -195,10 +220,14 @@ fn e2e_search_fulltext() {
     let output = mkb_in(dir.path())
         .args([
             "add",
-            "--doc-type", "project",
-            "--title", "ML Project",
-            "--observed-at", "2025-02-10T00:00:00Z",
-            "--body", "This project uses machine learning and neural networks",
+            "--doc-type",
+            "project",
+            "--title",
+            "ML Project",
+            "--observed-at",
+            "2025-02-10T00:00:00Z",
+            "--body",
+            "This project uses machine learning and neural networks",
         ])
         .output()
         .unwrap();
@@ -225,7 +254,11 @@ fn e2e_edit_updates_fields() {
         .args(["edit", doc_id, "--title", "Updated Title"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "edit failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "edit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["title"], "Updated Title");
@@ -241,7 +274,11 @@ fn e2e_rm_soft_delete() {
         .args(["rm", doc_id, "--doc-type", "project"])
         .output()
         .unwrap();
-    assert!(output.status.success(), "rm failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "rm failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(result["archived_to"].as_str().unwrap().contains("archive"));
@@ -260,14 +297,22 @@ fn e2e_link_create_and_list() {
     // Create link
     let output = mkb_in(dir.path())
         .args([
-            "link", "create",
-            "--source", alpha_id,
-            "--rel", "depends_on",
-            "--target", beta_id,
+            "link",
+            "create",
+            "--source",
+            alpha_id,
+            "--rel",
+            "depends_on",
+            "--target",
+            beta_id,
         ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "link create failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "link create failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // List forward links
     let output = mkb_in(dir.path())
@@ -308,11 +353,12 @@ fn e2e_gc_sweep() {
     let dir = init_vault();
     add_project(dir.path(), "Test Project");
 
-    let output = mkb_in(dir.path())
-        .args(["gc"])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "gc failed: {}", String::from_utf8_lossy(&output.stderr));
+    let output = mkb_in(dir.path()).args(["gc"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "gc failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(result["swept_at"].as_str().is_some());
@@ -327,10 +373,7 @@ fn e2e_stats_shows_vault_summary() {
     add_project(dir.path(), "Alpha");
     add_project(dir.path(), "Beta");
 
-    let output = mkb_in(dir.path())
-        .args(["stats"])
-        .output()
-        .unwrap();
+    let output = mkb_in(dir.path()).args(["stats"]).output().unwrap();
     assert!(output.status.success());
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -345,10 +388,7 @@ fn e2e_status_shows_health() {
     let dir = init_vault();
     add_project(dir.path(), "Test");
 
-    let output = mkb_in(dir.path())
-        .args(["status"])
-        .output()
-        .unwrap();
+    let output = mkb_in(dir.path()).args(["status"]).output().unwrap();
     assert!(output.status.success());
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -372,7 +412,11 @@ fn e2e_ingest_file() {
         .args(["ingest", file_path.to_str().unwrap()])
         .output()
         .unwrap();
-    assert!(output.status.success(), "ingest failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "ingest failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["ingested"], 1);

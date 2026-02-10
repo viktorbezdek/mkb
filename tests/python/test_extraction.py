@@ -5,11 +5,10 @@ Validates T-420.1 (dates), T-420.2 (entities), T-420.3 (confidence).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from mkb_ai.confidence import ConfidenceScorer, score_document
 from mkb_ai.extraction import DateExtractor, EntityExtractor
-
 
 # === T-420.1: Date/time extraction ===
 
@@ -45,7 +44,7 @@ class TestDateExtraction:
         assert results[0].value.month == 3
 
     def test_extract_relative_yesterday(self) -> None:
-        ref = datetime(2025, 2, 10, tzinfo=timezone.utc)
+        ref = datetime(2025, 2, 10, tzinfo=UTC)
         ext = DateExtractor(reference_time=ref)
         results = ext.extract("Updated yesterday.")
         assert len(results) == 1
@@ -53,7 +52,7 @@ class TestDateExtraction:
         assert results[0].value.day == 9
 
     def test_extract_relative_n_days_ago(self) -> None:
-        ref = datetime(2025, 2, 10, tzinfo=timezone.utc)
+        ref = datetime(2025, 2, 10, tzinfo=UTC)
         ext = DateExtractor(reference_time=ref)
         results = ext.extract("Discussed 5 days ago.")
         assert len(results) == 1

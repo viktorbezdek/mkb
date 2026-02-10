@@ -85,7 +85,7 @@ class MockEmbeddingBackend:
 
     @property
     def dimensions(self) -> int:
-        return mkb.embedding_dim()
+        return int(mkb.embedding_dim())
 
 
 class EmbeddingGenerator:
@@ -133,7 +133,10 @@ class EmbeddingGenerator:
     def search(self, query: str, limit: int = 10) -> list[dict[str, object]]:
         """Semantic search: embed the query and find similar documents."""
         query_embedding = self.backend.generate(query)
-        return mkb.search_semantic(self.vault_path, query_embedding, limit=limit)
+        results: list[dict[str, object]] = mkb.search_semantic(
+            self.vault_path, query_embedding, limit=limit
+        )
+        return results
 
 
 def _document_to_text(doc: dict[str, object]) -> str:
@@ -147,7 +150,7 @@ def _document_to_text(doc: dict[str, object]) -> str:
         parts.append(str(body))
     tags = doc.get("tags", [])
     if tags:
-        parts.append(f"Tags: {', '.join(str(t) for t in tags)}")  # type: ignore[union-attr]
+        parts.append(f"Tags: {', '.join(str(t) for t in tags)}")  # type: ignore[attr-defined]
     return "\n".join(parts)
 
 

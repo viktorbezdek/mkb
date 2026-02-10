@@ -9,7 +9,7 @@ Assigns a confidence score (0.0–1.0) based on:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

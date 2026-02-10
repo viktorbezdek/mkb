@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 @dataclass
@@ -72,7 +72,7 @@ class DateExtractor:
     """
 
     reference_time: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
 
     def extract(self, text: str) -> list[ExtractedDate]:
@@ -192,7 +192,7 @@ def _parse_iso_datetime(s: str) -> datetime | None:
 def _parse_iso_date(s: str) -> datetime | None:
     """Parse an ISO 8601 date-only string."""
     try:
-        return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(s).replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -209,7 +209,7 @@ def _parse_written_date(s: str) -> datetime | None:
     try:
         day = int(parts[1])
         year = int(parts[2])
-        return datetime(year, month, day, tzinfo=timezone.utc)
+        return datetime(year, month, day, tzinfo=UTC)
     except (ValueError, IndexError):
         return None
 
@@ -221,6 +221,6 @@ def _parse_slash_date(s: str) -> datetime | None:
         return None
     try:
         month, day, year = int(parts[0]), int(parts[1]), int(parts[2])
-        return datetime(year, month, day, tzinfo=timezone.utc)
+        return datetime(year, month, day, tzinfo=UTC)
     except ValueError:
         return None

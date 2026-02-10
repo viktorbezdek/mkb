@@ -4,7 +4,7 @@ Python interface to the Rust-powered MKB core. All vault operations
 go through the native `_mkb_core` extension module built via PyO3.
 """
 
-from mkb._mkb_core import (
+from mkb._mkb_core import (  # type: ignore[import-untyped]
     __version__,
     create_document,
     delete_document,

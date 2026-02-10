@@ -10,14 +10,15 @@ Processes raw text/files into MKB documents with:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import mkb
+
 from mkb_ai.confidence.scorer import ConfidenceScorer
 from mkb_ai.embeddings.generator import EmbeddingBackend, EmbeddingGenerator
 from mkb_ai.extraction.dates import DateExtractor
-from mkb_ai.extraction.entities import EntityExtractor
+from mkb_ai.extraction.entities import EntityExtractor, ExtractedEntity
 
 
 @dataclass
@@ -76,7 +77,7 @@ class IngestPipeline:
             obs_at = dates[0].value.isoformat()
         else:
             # Fall back to now
-            obs_at = datetime.now(timezone.utc).isoformat()
+            obs_at = datetime.now(UTC).isoformat()
 
         # Extract entities
         entities = self._entity_extractor.extract(text)
@@ -185,13 +186,12 @@ def _extract_title(text: str) -> str:
     return "Untitled"
 
 
-def _entities_to_tags(entities: list[object]) -> list[str]:
+def _entities_to_tags(entities: list[ExtractedEntity]) -> list[str]:
     """Convert extracted entities to tags."""
     tags: list[str] = []
     seen: set[str] = set()
-    for e in entities:
-        entity = e  # type: ignore[assignment]
-        tag = f"{entity.kind}:{entity.value}"  # type: ignore[union-attr]
+    for entity in entities:
+        tag = f"{entity.kind}:{entity.value}"
         if tag not in seen:
             tags.append(tag)
             seen.add(tag)
