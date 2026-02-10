@@ -12,9 +12,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mkb-core = { workspace = true }
+mkb-parser = { workspace = true }
 mkb-vault = { workspace = true }
 mkb-index = { workspace = true }
 mkb-query = { workspace = true }
 pyo3 = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
