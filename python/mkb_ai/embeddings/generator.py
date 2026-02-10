@@ -158,7 +158,7 @@ def _doc_type_from_id(doc_id: str) -> str:
         "meet": "meeting",
         "deci": "decision",
         "sign": "signal",
-        "doc": "document",
+        "docu": "document",
     }
     prefix = doc_id.split("-")[0] if "-" in doc_id else doc_id
     return prefix_map.get(prefix, prefix)
