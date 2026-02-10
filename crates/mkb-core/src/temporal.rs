@@ -105,6 +105,69 @@ impl DecayProfile {
     }
 }
 
+/// The DecayModel computes effective confidence of a document over time.
+///
+/// Formula: `C(t) = C₀ × 0.5^(t / half_life) × precision_penalty`
+///
+/// Where:
+/// - `C₀` is the initial confidence (typically 1.0)
+/// - `t` is elapsed time since `observed_at`
+/// - `half_life` comes from the decay profile
+/// - `precision_penalty` reduces confidence for lower-precision timestamps
+pub struct DecayModel;
+
+impl DecayModel {
+    /// Compute the effective confidence of a document at a given time.
+    ///
+    /// Returns a value in `[0.0, 1.0]` representing how much to trust this document.
+    #[must_use]
+    pub fn effective_confidence(
+        initial_confidence: f64,
+        observed_at: DateTime<Utc>,
+        at_time: DateTime<Utc>,
+        profile: &DecayProfile,
+        precision: TemporalPrecision,
+    ) -> f64 {
+        let elapsed = at_time.signed_duration_since(observed_at);
+        let elapsed_secs = elapsed.num_seconds() as f64;
+        let half_life_secs = profile.half_life.num_seconds() as f64;
+
+        if half_life_secs <= 0.0 || elapsed_secs < 0.0 {
+            return initial_confidence;
+        }
+
+        // Exponential decay: C(t) = C₀ × 0.5^(t / half_life)
+        let decay_factor = (0.5_f64).powf(elapsed_secs / half_life_secs);
+
+        // Precision penalty: lower precision = faster effective decay
+        let precision_penalty = Self::precision_multiplier(precision);
+
+        (initial_confidence * decay_factor * precision_penalty).clamp(0.0, 1.0)
+    }
+
+    /// Get the precision multiplier (penalty for lower precision).
+    ///
+    /// Exact = 1.0 (no penalty), Inferred = 0.5 (50% penalty).
+    #[must_use]
+    pub fn precision_multiplier(precision: TemporalPrecision) -> f64 {
+        match precision {
+            TemporalPrecision::Exact => 1.0,
+            TemporalPrecision::Day => 0.95,
+            TemporalPrecision::Week => 0.85,
+            TemporalPrecision::Month => 0.75,
+            TemporalPrecision::Quarter => 0.65,
+            TemporalPrecision::Approximate => 0.55,
+            TemporalPrecision::Inferred => 0.5,
+        }
+    }
+
+    /// Check if a document is expired at the given time.
+    #[must_use]
+    pub fn is_expired(valid_until: DateTime<Utc>, at_time: DateTime<Utc>) -> bool {
+        at_time > valid_until
+    }
+}
+
 /// The Temporal Gate — validates all temporal invariants before a document
 /// enters the vault.
 ///
@@ -396,5 +459,174 @@ mod tests {
     fn signal_decays_in_7_days() {
         let profile = DecayProfile::signal();
         assert_eq!(profile.half_life, Duration::days(7));
+    }
+
+    // === DecayModel tests (T-110.1) ===
+
+    #[test]
+    fn exponential_decay_halves_at_half_life() {
+        let profile = DecayProfile::default_profile(); // 90 days
+        let observed = utc(2025, 1, 1);
+        let at_half_life = observed + Duration::days(90);
+
+        let conf = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            at_half_life,
+            &profile,
+            TemporalPrecision::Exact,
+        );
+
+        // At exactly one half-life, confidence should be 0.5 (within float tolerance)
+        assert!(
+            (conf - 0.5).abs() < 0.01,
+            "Confidence at half-life should be ~0.5, got {conf}"
+        );
+    }
+
+    #[test]
+    fn decay_project_status_14_days() {
+        let profile = DecayProfile::project_status(); // 14 day half-life
+        let observed = utc(2025, 1, 1);
+
+        // At 14 days: ~0.5
+        let conf_14d = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            observed + Duration::days(14),
+            &profile,
+            TemporalPrecision::Exact,
+        );
+        assert!(
+            (conf_14d - 0.5).abs() < 0.01,
+            "At 14 days, confidence ~0.5, got {conf_14d}"
+        );
+
+        // At 28 days (2 half-lives): ~0.25
+        let conf_28d = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            observed + Duration::days(28),
+            &profile,
+            TemporalPrecision::Exact,
+        );
+        assert!(
+            (conf_28d - 0.25).abs() < 0.01,
+            "At 28 days, confidence ~0.25, got {conf_28d}"
+        );
+    }
+
+    #[test]
+    fn decay_decision_never_decays() {
+        let profile = DecayProfile::decision();
+        let observed = utc(2025, 1, 1);
+        let far_future = observed + Duration::days(365 * 10); // 10 years
+
+        let conf = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            far_future,
+            &profile,
+            TemporalPrecision::Exact,
+        );
+
+        // After 10 years with 100-year half-life, should still be very high
+        assert!(conf > 0.9, "Decision should barely decay, got {conf}");
+    }
+
+    #[test]
+    fn decay_signal_7_days() {
+        let profile = DecayProfile::signal(); // 7 day half-life
+        let observed = utc(2025, 1, 1);
+
+        let conf_7d = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            observed + Duration::days(7),
+            &profile,
+            TemporalPrecision::Exact,
+        );
+        assert!(
+            (conf_7d - 0.5).abs() < 0.01,
+            "Signal at 7 days ~0.5, got {conf_7d}"
+        );
+    }
+
+    #[test]
+    fn lower_precision_accelerates_decay() {
+        let profile = DecayProfile::default_profile();
+        let observed = utc(2025, 1, 1);
+        let at_time = observed + Duration::days(45);
+
+        let conf_exact = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            at_time,
+            &profile,
+            TemporalPrecision::Exact,
+        );
+        let conf_day = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            at_time,
+            &profile,
+            TemporalPrecision::Day,
+        );
+        let conf_inferred = DecayModel::effective_confidence(
+            1.0,
+            observed,
+            at_time,
+            &profile,
+            TemporalPrecision::Inferred,
+        );
+
+        assert!(
+            conf_exact > conf_day,
+            "Exact ({conf_exact}) should be > Day ({conf_day})"
+        );
+        assert!(
+            conf_day > conf_inferred,
+            "Day ({conf_day}) should be > Inferred ({conf_inferred})"
+        );
+    }
+
+    #[test]
+    fn is_expired_works() {
+        let valid_until = utc(2025, 6, 1);
+        assert!(!DecayModel::is_expired(valid_until, utc(2025, 5, 1)));
+        assert!(!DecayModel::is_expired(valid_until, utc(2025, 6, 1)));
+        assert!(DecayModel::is_expired(valid_until, utc(2025, 6, 2)));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn decay_is_monotonically_decreasing(
+            days_a in 0u32..1000,
+            days_b in 0u32..1000,
+        ) {
+            let profile = DecayProfile::default_profile();
+            let observed = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 1, 1, 0, 0, 0).unwrap();
+
+            let t_a = observed + Duration::days(i64::from(days_a.min(days_b)));
+            let t_b = observed + Duration::days(i64::from(days_a.max(days_b)));
+
+            let conf_a = DecayModel::effective_confidence(
+                1.0, observed, t_a, &profile, TemporalPrecision::Exact,
+            );
+            let conf_b = DecayModel::effective_confidence(
+                1.0, observed, t_b, &profile, TemporalPrecision::Exact,
+            );
+
+            // Earlier time should have >= confidence than later time
+            prop_assert!(conf_a >= conf_b - f64::EPSILON,
+                "Confidence should be monotonically decreasing: conf({}) = {} >= conf({}) = {}",
+                days_a.min(days_b), conf_a, days_a.max(days_b), conf_b);
+        }
     }
 }

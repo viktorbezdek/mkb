@@ -23,5 +23,5 @@ pub use document::Document;
 pub use error::{MkbError, Result};
 pub use link::Link;
 pub use temporal::{
-    DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision,
+    DecayModel, DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision,
 };
