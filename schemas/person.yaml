@@ -1,0 +1,31 @@
+name: person
+version: 1
+extends: _base
+description: "A person in the knowledge base"
+
+fields:
+  name:
+    type: string
+    required: true
+    indexed: true
+    searchable: true
+  role:
+    type: string
+    indexed: true
+  team:
+    type: "ref[]"
+    ref_type: team
+  email:
+    type: string
+    indexed: true
+    unique: true
+  reports_to:
+    type: ref
+    ref_type: person
+  influence:
+    type: enum
+    values: [low, medium, high, critical]
+    indexed: true
+  last_interaction:
+    type: datetime
+    indexed: true

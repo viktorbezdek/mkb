@@ -1,0 +1,31 @@
+name: meeting
+version: 1
+extends: _base
+description: "A meeting record"
+
+fields:
+  title:
+    type: string
+    required: true
+    searchable: true
+  meeting_date:
+    type: datetime
+    required: true
+    indexed: true
+  participants:
+    type: "ref[]"
+    ref_type: person
+  meeting_type:
+    type: enum
+    values: [standup, 1on1, planning, review, adhoc, all_hands]
+  action_items:
+    type: json
+  decisions_made:
+    type: "ref[]"
+    ref_type: decision
+  topics:
+    type: "string[]"
+    searchable: true
+  sentiment:
+    type: enum
+    values: [positive, neutral, tense, negative]

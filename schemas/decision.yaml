@@ -1,0 +1,33 @@
+name: decision
+version: 1
+extends: _base
+description: "A recorded decision"
+
+fields:
+  title:
+    type: string
+    required: true
+    searchable: true
+  decision_date:
+    type: date
+    required: true
+    indexed: true
+  status:
+    type: enum
+    values: [proposed, decided, reversed, superseded]
+    indexed: true
+  outcome:
+    type: string
+  rationale:
+    type: string
+  participants:
+    type: "ref[]"
+    ref_type: person
+  affects:
+    type: "ref[]"
+    ref_type: project
+  alternatives_considered:
+    type: "string[]"
+  reversibility:
+    type: enum
+    values: [easily, with_effort, irreversible]

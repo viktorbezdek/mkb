@@ -1,0 +1,84 @@
+name: _base
+version: 2
+description: "Base fields inherited by all document types. Temporally grounded."
+
+fields:
+  id:
+    type: string
+    required: true
+    unique: true
+    auto: true
+  type:
+    type: enum
+    required: true
+    auto: true
+  _created_at:
+    type: datetime
+    required: true
+    auto: true
+    indexed: true
+    immutable: true
+  _modified_at:
+    type: datetime
+    required: true
+    auto: true
+    indexed: true
+  observed_at:
+    type: datetime
+    required: true
+    indexed: true
+    description: "When was this information true or observed?"
+  valid_until:
+    type: datetime
+    required: true
+    indexed: true
+    description: "When does this information expire?"
+  temporal_precision:
+    type: enum
+    values: [exact, day, week, month, quarter, approximate, inferred]
+    required: true
+    indexed: true
+    default: inferred
+  occurred_at:
+    type: datetime
+    indexed: true
+    description: "When the described event actually happened"
+  source:
+    type: string
+    indexed: true
+  source_hash:
+    type: string
+  confidence:
+    type: float
+    default: 1.0
+    indexed: true
+  provenance:
+    type: string
+    indexed: true
+  supersedes:
+    type: ref
+  superseded_by:
+    type: ref
+  superseded_at:
+    type: datetime
+    indexed: true
+  tags:
+    type: "string[]"
+    indexed: true
+    searchable: true
+  links:
+    type: json
+  embeddings_dirty:
+    type: boolean
+    auto: true
+
+validation:
+  - rule: "observed_at IS NOT NULL"
+    message: "REJECTED: No temporal grounding. Every document must have observed_at."
+    severity: fatal
+  - rule: "valid_until >= observed_at"
+    message: "valid_until cannot be before observed_at"
+    severity: fatal
+  - rule: "temporal_precision IS NOT NULL"
+    message: "temporal_precision must be set"
+    severity: fatal

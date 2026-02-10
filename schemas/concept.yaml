@@ -1,0 +1,23 @@
+name: concept
+version: 1
+extends: _base
+description: "A concept or piece of domain knowledge"
+
+fields:
+  title:
+    type: string
+    required: true
+    searchable: true
+  domain:
+    type: string
+    indexed: true
+  definition:
+    type: string
+  related_to:
+    type: "ref[]"
+    ref_type: concept
+  used_in:
+    type: "ref[]"
+  aliases:
+    type: "string[]"
+    searchable: true

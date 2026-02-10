@@ -1,0 +1,59 @@
+name: project
+version: 2
+extends: _base
+description: "A tracked initiative, epic, or workstream"
+
+fields:
+  title:
+    type: string
+    required: true
+    indexed: true
+    searchable: true
+  status:
+    type: enum
+    values: [proposed, approved, in_progress, blocked, completed, cancelled]
+    required: true
+    indexed: true
+    default: proposed
+  owner:
+    type: ref
+    ref_type: person
+    required: true
+    indexed: true
+  team:
+    type: "ref[]"
+    ref_type: team
+    indexed: true
+  priority:
+    type: enum
+    values: [P0, P1, P2, P3]
+    indexed: true
+  start_date:
+    type: date
+    indexed: true
+  target_date:
+    type: date
+    indexed: true
+  stakeholders:
+    type: "ref[]"
+    ref_type: person
+  depends_on:
+    type: "ref[]"
+    ref_type: project
+  blocks:
+    type: "ref[]"
+    ref_type: project
+  kpis:
+    type: map
+    key_type: string
+    value_type: string
+  health:
+    type: enum
+    values: [green, yellow, red]
+    indexed: true
+
+validation:
+  - rule: "target_date >= start_date"
+    message: "Target date must be after start date"
+  - rule: "owner IS NOT NULL"
+    message: "Every project needs an owner"

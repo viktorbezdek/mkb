@@ -1,0 +1,43 @@
+name: signal
+version: 1
+extends: _base
+description: "An AI-inferred implicit signal"
+
+fields:
+  title:
+    type: string
+    required: true
+    searchable: true
+  signal_type:
+    type: enum
+    values: [sentiment, risk, relationship, blocker, opportunity, pattern, assumption, tension, capacity, alignment]
+    required: true
+    indexed: true
+  severity:
+    type: enum
+    values: [low, medium, high, critical]
+    indexed: true
+  affected_entities:
+    type: "ref[]"
+  evidence:
+    type: string
+  corroborated_by:
+    type: "ref[]"
+    ref_type: signal
+  recommended_action:
+    type: string
+  acknowledged:
+    type: boolean
+    default: false
+  resolved:
+    type: boolean
+    default: false
+  first_detected:
+    type: datetime
+    indexed: true
+  last_seen:
+    type: datetime
+    indexed: true
+  occurrence_count:
+    type: integer
+    default: 1
