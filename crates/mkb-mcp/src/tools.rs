@@ -4,8 +4,13 @@ use std::path::PathBuf;
 
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router, ServerHandler,
+    model::{
+        AnnotateAble, ListResourceTemplatesResult, PaginatedRequestParams, RawResourceTemplate,
+        ReadResourceRequestParams, ReadResourceResult, ResourceContents, ServerCapabilities,
+        ServerInfo,
+    },
+    service::RequestContext,
+    tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler,
 };
 use serde::Deserialize;
 
@@ -36,6 +41,68 @@ impl MkbMcpService {
 
     fn open_vault(&self) -> Result<Vault, String> {
         Vault::open(&self.vault_path).map_err(|e| format!("Failed to open vault: {e}"))
+    }
+
+    fn handle_read_resource(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
+        // Parse mkb://vault/{type}/{id}
+        if let Some(rest) = uri.strip_prefix("mkb://vault/") {
+            let parts: Vec<&str> = rest.splitn(2, '/').collect();
+            if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                return Err(ErrorData::invalid_params(
+                    "Invalid vault URI: expected mkb://vault/{type}/{id}",
+                    None,
+                ));
+            }
+            let doc_type = parts[0];
+            let doc_id = parts[1];
+            let vault = self
+                .open_vault()
+                .map_err(|e| ErrorData::internal_error(e, None))?;
+            let doc = vault
+                .read(doc_type, doc_id)
+                .map_err(|e| ErrorData::internal_error(format!("Document not found: {e}"), None))?;
+            let json = serde_json::json!({
+                "id": doc.id,
+                "type": doc.doc_type,
+                "title": doc.title,
+                "body": doc.body,
+                "tags": doc.tags,
+                "observed_at": doc.temporal.observed_at.to_rfc3339(),
+                "valid_until": doc.temporal.valid_until.to_rfc3339(),
+                "confidence": doc.confidence,
+                "source": doc.source,
+                "fields": doc.fields,
+            });
+            let text = serde_json::to_string_pretty(&json).unwrap_or_else(|_| "{}".to_string());
+            return Ok(ReadResourceResult {
+                contents: vec![ResourceContents::text(text, uri)],
+            });
+        }
+
+        // Parse mkb://query/{mkql}
+        if let Some(mkql_encoded) = uri.strip_prefix("mkb://query/") {
+            let mkql = urlencoding::decode(mkql_encoded)
+                .map_err(|e| ErrorData::invalid_params(format!("Invalid URI encoding: {e}"), None))?
+                .into_owned();
+            let index = self
+                .open_index()
+                .map_err(|e| ErrorData::internal_error(e, None))?;
+            let ast = mkb_parser::parse_mkql(&mkql)
+                .map_err(|e| ErrorData::invalid_params(format!("Parse error: {e}"), None))?;
+            let compiled = mkb_query::compile(&ast)
+                .map_err(|e| ErrorData::internal_error(format!("Compile error: {e}"), None))?;
+            let result = mkb_query::execute(&index, &compiled)
+                .map_err(|e| ErrorData::internal_error(format!("Execution error: {e}"), None))?;
+            let text = mkb_query::format_results(&result, mkb_query::OutputFormat::Json);
+            return Ok(ReadResourceResult {
+                contents: vec![ResourceContents::text(text, uri)],
+            });
+        }
+
+        Err(ErrorData::invalid_params(
+            format!("Unknown resource URI scheme: {uri}"),
+            None,
+        ))
     }
 }
 
@@ -243,9 +310,50 @@ impl ServerHandler for MkbMcpService {
                  search full-text or semantically, read documents, and check vault status."
                     .to_string(),
             ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             ..Default::default()
         }
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_
+    {
+        let templates = vec![
+            RawResourceTemplate {
+                uri_template: "mkb://vault/{type}/{id}".to_string(),
+                name: "Document".to_string(),
+                title: Some("MKB Document".to_string()),
+                description: Some("Read a document from the vault by type and ID".to_string()),
+                mime_type: Some("application/json".to_string()),
+                icons: None,
+            }
+            .no_annotation(),
+            RawResourceTemplate {
+                uri_template: "mkb://query/{mkql}".to_string(),
+                name: "Query".to_string(),
+                title: Some("MKQL Query Results".to_string()),
+                description: Some("Execute an MKQL query and return results as JSON".to_string()),
+                mime_type: Some("application/json".to_string()),
+                icons: None,
+            }
+            .no_annotation(),
+        ];
+        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(templates)))
+    }
+
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, ErrorData>> + Send + '_ {
+        let result = self.handle_read_resource(&request.uri);
+        std::future::ready(result)
     }
 }
 
@@ -257,5 +365,80 @@ mod tests {
     fn mcp_service_creation() {
         let service = MkbMcpService::new(PathBuf::from("/tmp/test-vault"));
         assert_eq!(service.vault_path, PathBuf::from("/tmp/test-vault"));
+    }
+
+    fn setup_vault_with_doc() -> (PathBuf, MkbMcpService, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().to_path_buf();
+        let vault = mkb_vault::Vault::init(&vault_path).unwrap();
+
+        let input = mkb_core::temporal::RawTemporalInput {
+            observed_at: Some(chrono::Utc::now()),
+            ..Default::default()
+        };
+        let profile = mkb_core::temporal::DecayProfile::new(chrono::Duration::days(14));
+        let mut doc = mkb_core::Document::new(
+            "proj-alpha-001".to_string(),
+            "project".to_string(),
+            "Alpha Project".to_string(),
+            input,
+            &profile,
+        )
+        .unwrap();
+        doc.body = "# Alpha\n\nProject details here.".to_string();
+        vault.create(&doc).unwrap();
+
+        let index_path = vault_path.join(".mkb").join("index").join("mkb.db");
+        let index = mkb_index::IndexManager::open(&index_path).unwrap();
+        index.index_document(&doc).unwrap();
+
+        let service = MkbMcpService::new(vault_path.clone());
+        (vault_path, service, dir)
+    }
+
+    #[test]
+    fn read_resource_vault_document() {
+        let (_vault_path, service, _dir) = setup_vault_with_doc();
+        let result = service
+            .handle_read_resource("mkb://vault/project/proj-alpha-001")
+            .unwrap();
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, uri, .. } => {
+                assert!(text.contains("Alpha Project"));
+                assert!(text.contains("proj-alpha-001"));
+                assert_eq!(uri, "mkb://vault/project/proj-alpha-001");
+            }
+            _ => panic!("Expected TextResourceContents"),
+        }
+    }
+
+    #[test]
+    fn read_resource_query() {
+        let (_vault_path, service, _dir) = setup_vault_with_doc();
+        let mkql = urlencoding::encode("SELECT * FROM project");
+        let uri = format!("mkb://query/{mkql}");
+        let result = service.handle_read_resource(&uri).unwrap();
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => {
+                assert!(text.contains("proj-alpha-001"));
+            }
+            _ => panic!("Expected TextResourceContents"),
+        }
+    }
+
+    #[test]
+    fn read_resource_invalid_vault_uri() {
+        let service = MkbMcpService::new(PathBuf::from("/tmp/nonexistent"));
+        let result = service.handle_read_resource("mkb://vault/project/");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_resource_unknown_scheme() {
+        let service = MkbMcpService::new(PathBuf::from("/tmp/test"));
+        let result = service.handle_read_resource("https://example.com");
+        assert!(result.is_err());
     }
 }
