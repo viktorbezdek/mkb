@@ -4,10 +4,13 @@
 //!
 //! This crate defines the foundational types used across all other MKB crates:
 //! - [`Document`] — the central knowledge unit
-//! - Temporal types ([`ObservedAt`], [`ValidUntil`], [`TemporalPrecision`])
+//! - Temporal types ([`TemporalFields`], [`TemporalPrecision`], [`TemporalGate`])
+//! - [`RawTemporalInput`] — pre-validation temporal input
+//! - [`DecayProfile`] — configurable decay for `valid_until` computation
 //! - [`Link`] — typed relationships between documents
 //! - [`SchemaDefinition`] — document type contracts
 //! - Error hierarchy ([`MkbError`], [`TemporalError`], [`SchemaError`])
+//! - Frontmatter parsing ([`frontmatter`])
 
 pub mod document;
 pub mod error;
@@ -19,4 +22,4 @@ pub mod temporal;
 pub use document::Document;
 pub use error::{MkbError, Result};
 pub use link::Link;
-pub use temporal::{TemporalFields, TemporalPrecision};
+pub use temporal::{DecayProfile, RawTemporalInput, TemporalFields, TemporalGate, TemporalPrecision};
