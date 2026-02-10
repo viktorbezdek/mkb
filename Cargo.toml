@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 license = "Apache-2.0"
@@ -33,6 +33,7 @@ zerocopy = { version = "0.7", features = ["derive"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Async
 tokio = { version = "1", features = ["full"] }

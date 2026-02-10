@@ -10,6 +10,10 @@ license.workspace = true
 name = "mkb"
 path = "src/main.rs"
 
+[[bin]]
+name = "mkb-bench"
+path = "src/bench.rs"
+
 [dependencies]
 mkb-core = { workspace = true }
 mkb-parser = { workspace = true }
@@ -20,13 +24,14 @@ mkb-mcp = { workspace = true }
 rmcp = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 serde_json = { workspace = true }

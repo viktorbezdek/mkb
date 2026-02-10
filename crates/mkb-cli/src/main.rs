@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use mkb_core::document::Document;
 use mkb_core::frontmatter;
@@ -244,6 +244,12 @@ enum Commands {
         /// Vault directory (defaults to current directory)
         #[arg(long, default_value = ".")]
         vault: PathBuf,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for (bash, zsh, fish, powershell)
+        shell: clap_complete::Shell,
     },
 
     /// Ingest files into the vault
@@ -524,6 +530,11 @@ fn main() -> Result<()> {
         Some(Commands::Stats { vault }) => cmd_stats(&vault),
         Some(Commands::Status { vault }) => cmd_status(&vault),
         Some(Commands::Watch { vault }) => cmd_watch(&vault),
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "mkb", &mut std::io::stdout());
+            Ok(())
+        }
         Some(Commands::Ingest {
             path,
             doc_type,
