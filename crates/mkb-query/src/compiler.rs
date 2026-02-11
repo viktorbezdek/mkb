@@ -218,15 +218,37 @@ fn compile_predicate(pred: &Predicate, ctx: &mut CompileCtx) -> Result<(String, 
     }
 }
 
+/// Convert MKQL duration string (e.g. "7d", "24h", "30m") to SQLite modifier ("-7 days").
+fn duration_to_sqlite_modifier(duration: &str) -> Result<String, String> {
+    let s = duration.trim();
+    if s.is_empty() {
+        return Err("Empty duration".to_string());
+    }
+    let (num_part, unit) = s.split_at(s.len() - 1);
+    let n: i64 = num_part
+        .parse()
+        .map_err(|_| format!("Invalid duration number: '{num_part}'"))?;
+    let sqlite_unit = match unit {
+        "d" => "days",
+        "h" => "hours",
+        "m" => "minutes",
+        "s" => "seconds",
+        "M" => "months",
+        "y" => "years",
+        _ => return Err(format!("Unknown duration unit: '{unit}'")),
+    };
+    Ok(format!("-{n} {sqlite_unit}"))
+}
+
 fn compile_temporal(tf: &TemporalFunction, ctx: &mut CompileCtx) -> Result<(String, bool), String> {
     match tf {
         TemporalFunction::Fresh { duration } => {
-            let cutoff = format!("-{duration}");
+            let cutoff = duration_to_sqlite_modifier(duration)?;
             let idx = ctx.next_param(SqlParam::Text(cutoff));
             Ok((format!("d.observed_at >= datetime('now', ?{idx})"), false))
         }
         TemporalFunction::Stale { duration } => {
-            let cutoff = format!("-{duration}");
+            let cutoff = duration_to_sqlite_modifier(duration)?;
             let idx = ctx.next_param(SqlParam::Text(cutoff));
             Ok((format!("d.observed_at < datetime('now', ?{idx})"), false))
         }
