@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(graph.nodes.len(), 2); // Alpha + Beta
                                           // Should include the depends_on edge between them
         assert!(
-            graph.edges.len() >= 1,
+            !graph.edges.is_empty(),
             "Expected at least 1 edge between projects"
         );
     }

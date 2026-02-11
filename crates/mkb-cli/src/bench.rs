@@ -133,7 +133,10 @@ fn recall(retrieved: &[String], relevant: &HashSet<String>) -> f64 {
         return 1.0;
     }
     let retrieved_set: HashSet<_> = retrieved.iter().collect();
-    let hits = relevant.iter().filter(|id| retrieved_set.contains(id)).count();
+    let hits = relevant
+        .iter()
+        .filter(|id| retrieved_set.contains(id))
+        .count();
     hits as f64 / relevant.len() as f64
 }
 
@@ -143,21 +146,21 @@ fn recall(retrieved: &[String], relevant: &HashSet<String>) -> f64 {
 
 struct AccuracyResult {
     // Processing accuracy
-    ingest_accuracy: f64,        // docs correctly indexed / total docs
-    field_preservation: f64,     // fields correctly preserved after round-trip
-    temporal_integrity: f64,     // temporal fields (observed_at, valid_until) correct
+    ingest_accuracy: f64,    // docs correctly indexed / total docs
+    field_preservation: f64, // fields correctly preserved after round-trip
+    temporal_integrity: f64, // temporal fields (observed_at, valid_until) correct
 
     // FTS retrieval accuracy
-    fts_precision_at_10: f64,    // avg precision@10 for unique-keyword searches
-    fts_recall: f64,             // avg recall for unique-keyword searches
+    fts_precision_at_10: f64, // avg precision@10 for unique-keyword searches
+    fts_recall: f64,          // avg recall for unique-keyword searches
 
     // MKQL retrieval accuracy
-    mkql_type_filter: f64,       // query by type returns correct set
-    mkql_current_accuracy: f64,  // CURRENT() returns only non-expired docs
-    mkql_fresh_accuracy: f64,    // FRESH('7d') returns only recent docs
+    mkql_type_filter: f64,      // query by type returns correct set
+    mkql_current_accuracy: f64, // CURRENT() returns only non-expired docs
+    mkql_fresh_accuracy: f64,   // FRESH('7d') returns only recent docs
 
     // Semantic retrieval accuracy
-    knn_cluster_precision: f64,  // top-K results from same cluster
+    knn_cluster_precision: f64, // top-K results from same cluster
 
     // Performance (secondary)
     ingest_docs_per_sec: f64,
@@ -308,7 +311,12 @@ fn run_accuracy_benchmark(n: usize) -> AccuracyResult {
             let retrieved: HashSet<String> = qr
                 .rows
                 .iter()
-                .filter_map(|r| r.fields.get("id").and_then(|v| v.as_str()).map(String::from))
+                .filter_map(|r| {
+                    r.fields
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
                 .collect();
             if expected.is_empty() && retrieved.is_empty() {
                 type_accuracies.push(1.0);
@@ -336,7 +344,12 @@ fn run_accuracy_benchmark(n: usize) -> AccuracyResult {
         let retrieved: HashSet<String> = qr
             .rows
             .iter()
-            .filter_map(|r| r.fields.get("id").and_then(|v| v.as_str()).map(String::from))
+            .filter_map(|r| {
+                r.fields
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .collect();
         // All retrieved should be current (precision-focused)
         let expected_current_projects: HashSet<String> = ground_truth
@@ -379,16 +392,19 @@ fn run_accuracy_benchmark(n: usize) -> AccuracyResult {
         let retrieved: HashSet<String> = qr
             .rows
             .iter()
-            .filter_map(|r| r.fields.get("id").and_then(|v| v.as_str()).map(String::from))
+            .filter_map(|r| {
+                r.fields
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .collect();
         if expected_fresh_meetings.is_empty() && retrieved.is_empty() {
             1.0
         } else if expected_fresh_meetings.is_empty() {
             0.0
         } else {
-            let intersection = expected_fresh_meetings
-                .intersection(&retrieved)
-                .count();
+            let intersection = expected_fresh_meetings.intersection(&retrieved).count();
             let union = expected_fresh_meetings.union(&retrieved).count();
             intersection as f64 / union as f64
         }
@@ -423,7 +439,9 @@ fn run_accuracy_benchmark(n: usize) -> AccuracyResult {
         let relevant = cluster_members.get(cluster).cloned().unwrap_or_default();
 
         let start = Instant::now();
-        let results = index.search_semantic(&query_embedding, 10).unwrap_or_default();
+        let results = index
+            .search_semantic(&query_embedding, 10)
+            .unwrap_or_default();
         knn_latencies.push(start.elapsed().as_micros() as f64);
 
         let retrieved_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
