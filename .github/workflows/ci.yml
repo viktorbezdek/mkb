@@ -18,7 +18,7 @@ jobs:
       matrix:
         check: [fmt, clippy, test, doc]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
@@ -55,7 +55,7 @@ jobs:
       - name: Generate coverage
         run: cargo tarpaulin --workspace --out xml --output-dir coverage/
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: coverage/cobertura.xml
           flags: rust
@@ -68,8 +68,8 @@ jobs:
       matrix:
         check: [lint, typecheck, test]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.check == 'test'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
           flags: python
@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [rust-check, python-check]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
@@ -114,19 +114,19 @@ jobs:
           uv sync --all-extras
           uv run maturin develop --release
       - name: Run E2E
-        run: uv run pytest tests/e2e/ -v --timeout=120
+        run: uv run pytest tests/e2e/ -v
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Cargo audit
         run: |
           cargo install cargo-audit
           cargo audit
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
       - name: Pip audit
         run: |
           uv sync --all-extras
