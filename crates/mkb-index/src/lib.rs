@@ -12,7 +12,7 @@ use std::path::Path;
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, types::Value as SqlValue, Connection};
 use sqlite_vec::sqlite3_vec_init;
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 
 use mkb_core::document::Document;
 use mkb_core::error::MkbError;

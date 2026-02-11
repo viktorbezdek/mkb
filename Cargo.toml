@@ -14,7 +14,7 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.83"
 license = "Apache-2.0"
 repository = "https://github.com/viktorbezdek/mkb"
 description = "Markdown Knowledge Base for LLMs"
@@ -29,7 +29,7 @@ toml = "0.8"
 # Database
 rusqlite = { version = "0.38", features = ["bundled-full"] }
 sqlite-vec = "0.1.6"
-zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -55,7 +55,7 @@ schemars = "1"
 urlencoding = "2"
 
 # File watching
-notify = "7"
+notify = "8"
 
 # Hashing
 sha2 = "0.10"
@@ -65,7 +65,7 @@ proptest = "1"
 tempfile = "3"
 
 # Python bridge
-pyo3 = { version = "0.24", features = ["abi3-py311"] }
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
 
 # Logging
 tracing = "0.1"
