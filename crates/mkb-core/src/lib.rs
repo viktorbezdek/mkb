@@ -8,8 +8,8 @@
 //! - [`RawTemporalInput`] — pre-validation temporal input
 //! - [`DecayProfile`] — configurable decay for `valid_until` computation
 //! - [`Link`] — typed relationships between documents
-//! - [`SchemaDefinition`] — document type contracts
-//! - Error hierarchy ([`MkbError`], [`TemporalError`], [`SchemaError`])
+//! - [`schema::SchemaDefinition`] — document type contracts
+//! - Error hierarchy ([`MkbError`], [`error::TemporalError`], [`error::SchemaError`])
 //! - Frontmatter parsing ([`frontmatter`])
 
 pub mod document;
