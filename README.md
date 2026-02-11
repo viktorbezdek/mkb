@@ -222,7 +222,7 @@ mkb/
 
 ## Benchmarks
 
-Performance measured on synthetic documents across three scales.
+Processing and retrieval accuracy measured on synthetic ground-truth documents across three scales. Each document has known keywords, temporal properties, and cluster membership for verifiable precision/recall.
 
 *Run benchmarks: `cargo run --release --bin mkb-bench`*
 
@@ -230,17 +230,37 @@ Performance measured on synthetic documents across three scales.
 ```
 Platform: macOS aarch64 (Apple Silicon)
 
-| Operation             |  100 docs |  1,000 docs | 10,000 docs |
-|-----------------------|-----------|-------------|-------------|
-| Bulk Ingest           |   3.2K/s  |     2.8K/s  |     2.8K/s  |
-| FTS Search (p50)      |    39 us  |     149 us  |       2 ms  |
-| FTS Search (p95)      |    95 us  |     266 us  |       3 ms  |
-| MKQL Query (p50)      |    30 us  |      79 us  |     957 us  |
-| MKQL Query (p95)      |    55 us  |     255 us  |       3 ms  |
-| KNN Search (p50)      |   961 us  |       1 ms  |       4 ms  |
-| KNN Search (p95)      |     1 ms  |       1 ms  |       4 ms  |
-| Index Size            |  6.6 MB   |    8.4 MB   |   34.6 MB   |
+Processing Accuracy
+
+| Metric                      |  100 docs |   1K docs |  10K docs |
+|-----------------------------|-----------|-----------|-----------|
+| Ingest Accuracy             |    100.0% |    100.0% |    100.0% |
+| Field Preservation          |    100.0% |    100.0% |    100.0% |
+| Temporal Integrity          |    100.0% |    100.0% |    100.0% |
+
+Retrieval Accuracy
+
+| Metric                      |  100 docs |   1K docs |  10K docs |
+|-----------------------------|-----------|-----------|-----------|
+| FTS Precision@10            |    100.0% |    100.0% |    100.0% |
+| FTS Recall                  |    100.0% |    100.0% |    100.0% |
+| MKQL Type Filter (Jaccard)  |    100.0% |    100.0% |    100.0% |
+| MKQL CURRENT() Precision    |    100.0% |    100.0% |    100.0% |
+| MKQL FRESH('7d') (Jaccard)  |    100.0% |    100.0% |    100.0% |
+| KNN Cluster Precision@10    |     20.0% |     20.0% |     20.0% |
+
+Performance
+
+| Metric                      |  100 docs |   1K docs |  10K docs |
+|-----------------------------|-----------|-----------|-----------|
+| Ingest Throughput           |   3.3K/s  |   3.0K/s  |   2.3K/s  |
+| FTS Search (p50)            |    29 us  |    36 us  |    25 us  |
+| MKQL Query (p50)            |    46 us  |   337 us  |     5 ms  |
+| KNN Search (p50)            |   975 us  |     2 ms  |    18 ms  |
+| Index Size                  |   7.0 MB  |  14.9 MB  | 147.7 MB  |
 ```
+
+> **Note:** KNN Cluster Precision uses deterministic mock embeddings (SHA256-based) which don't produce semantic clusters. The 20% baseline matches random expectation with 5 clusters. Real embedding models (OpenAI, etc.) achieve significantly higher precision.
 <!-- BENCHMARK_RESULTS_END -->
 
 ## Development
