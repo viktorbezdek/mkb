@@ -65,7 +65,7 @@ proptest = "1"
 tempfile = "3"
 
 # Python bridge
-pyo3 = { version = "0.23", features = ["abi3-py311"] }
+pyo3 = { version = "0.24", features = ["abi3-py311"] }
 
 # Logging
 tracing = "0.1"
