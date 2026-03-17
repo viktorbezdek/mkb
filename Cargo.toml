@@ -27,7 +27,7 @@ serde_yaml = "0.9"
 toml = "0.8"
 
 # Database
-rusqlite = { version = "0.38", features = ["bundled-full"] }
+rusqlite = { version = "0.39", features = ["bundled-full"] }
 sqlite-vec = "0.1.6"
 zerocopy = { version = "0.8", features = ["derive"] }
 
