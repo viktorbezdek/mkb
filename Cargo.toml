@@ -58,7 +58,7 @@ urlencoding = "2"
 notify = "8"
 
 # Hashing
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Testing
 proptest = "1"
